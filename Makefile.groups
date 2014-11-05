@@ -188,8 +188,6 @@ mod_list_all=$(sort $(mod_list_basic) $(mod_list_extra) \
 			   $(mod_list_gzcompress) $(mod_list_uuid) \
 			   $(mod_list_ev))
 
-
-
 ### --- Groups defined for source code compilation ###
 
 # groups are sets of modules selected by compile target interest (should be
@@ -352,6 +350,9 @@ module_group_kuuid=$(mod_list_uuid)
 
 # pkg libev modules
 module_group_kev=$(mod_list_ev)
+
+# Modules needed by Okeanos
+module_group_okeanos=tm tmx rr sl pv kex htable textops siputils maxfwd sanity pike xlog rtpengine mi_fifo auth uac nat_traversal nathelper
 
 # list of static modules
 #
