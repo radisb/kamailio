@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History
  * -------
@@ -258,20 +258,18 @@ void free_cell( struct cell* dead_cell )
 
 
 
-static inline void init_synonym_id( struct cell *t )
+static inline void init_synonym_id( struct sip_msg *p_msg, char *hash )
 {
-	struct sip_msg *p_msg;
 	int size;
 	char *c;
 	unsigned int myrand;
 
-	p_msg=t->uas.request;
 	if (p_msg) {
 		/* char value of a proxied transaction is
 		   calculated out of header-fields forming
 		   transaction key
 		*/
-		char_msg_val( p_msg, t->md5 );
+		char_msg_val( p_msg, hash );
 	} else {
 		/* char value for a UAC transaction is created
 		   randomly -- UAC is an originating stateful element
@@ -280,7 +278,7 @@ static inline void init_synonym_id( struct cell *t )
 		*/
 		/* HACK : not long enough */
 		myrand=rand();
-		c=t->md5;
+		c = hash;
 		size=MD5_LEN;
 		memset(c, '0', size );
 		int2reverse_hex( &c, &size, myrand );
@@ -292,7 +290,7 @@ static void inline init_branches(struct cell *t)
 	unsigned int i;
 	struct ua_client *uac;
 
-	for(i=0;i<MAX_BRANCHES;i++)
+	for(i=0;i<sr_dst_max_branches;i++)
 	{
 		uac=&t->uac[i];
 		uac->request.my_T = t;
@@ -315,21 +313,29 @@ struct cell*  build_cell( struct sip_msg* p_msg )
 #ifdef WITH_XAVP
 	sr_xavp_t** xold;
 #endif
+	unsigned int cell_size;
 
-	/* allocs a new cell, add space for md5 (MD5_LEN - sizeof(struct cell.md5)) */
-	new_cell = (struct cell*)shm_malloc( sizeof( struct cell )+
-			MD5_LEN-sizeof(((struct cell*)0)->md5) );
+	/* allocs a new cell, add space for:
+	 * md5 (MD5_LEN - sizeof(struct cell.md5))
+	 * uac (sr_dst_max_banches * sizeof(struct ua_client) ) */
+	cell_size = sizeof( struct cell ) + MD5_LEN - sizeof(((struct cell*)0)->md5)
+				+ (sr_dst_max_branches * sizeof(struct ua_client));
+
+	new_cell = (struct cell*)shm_malloc( cell_size );
 	if  ( !new_cell ) {
 		ser_error=E_OUT_OF_MEM;
 		return NULL;
 	}
 
 	/* filling with 0 */
-	memset( new_cell, 0, sizeof( struct cell ) );
+	memset( new_cell, 0, cell_size );
 
 	/* UAS */
 	new_cell->uas.response.my_T=new_cell;
 	init_rb_timers(&new_cell->uas.response);
+	/* UAC */
+	new_cell->uac = (struct ua_client*)((char*)new_cell + sizeof(struct cell)
+							+ MD5_LEN - sizeof(((struct cell*)0)->md5));
 	/* timers */
 	init_cell_timers(new_cell);
 
@@ -387,7 +393,7 @@ struct cell*  build_cell( struct sip_msg* p_msg )
 	new_cell->relayed_reply_branch   = -1;
 	/* new_cell->T_canceled = T_UNDEFINED; */
 
-	init_synonym_id(new_cell);
+	init_synonym_id(p_msg, new_cell->md5);
 	init_cell_lock(  new_cell );
 	init_async_lock( new_cell );
 	t_stats_created();

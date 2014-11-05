@@ -19,7 +19,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /* History:
@@ -166,10 +166,8 @@ struct dns_hash_entry{
 };
 
 
-#if MAX_BRANCHES < 16
-/* forking is limited by tm to 12 by default */
-typedef unsigned short srv_flags_t;
-#elif MAX_BRANCHES < 32
+/* to fit in the limit of MAX_BRANCHES */
+#if MAX_BRANCHES_LIMIT < 32
 typedef unsigned int srv_flags_t;
 #else
 typedef unsigned long long srv_flags_t;

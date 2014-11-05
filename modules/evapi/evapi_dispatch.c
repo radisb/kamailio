@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -122,7 +122,7 @@ int evapi_run_cfg_route(evapi_env_t *evenv, int rt)
 	fmsg = &tmsg;
 	evapi_set_msg_env(fmsg, evenv);
 	backup_rt = get_route_type();
-	set_route_type(REQUEST_ROUTE);
+	set_route_type(EVENT_ROUTE);
 	init_run_actions_ctx(&ctx);
 	run_top_route(event_rt.rlist[rt], fmsg, 0);
 	set_route_type(backup_rt);

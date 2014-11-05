@@ -19,7 +19,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * --------
@@ -690,7 +690,7 @@ int update_subscription(struct sip_msg* msg, subs_t* subs, int to_tag_gen,
 		}
 		else
 		{
-			if(notify(subs, NULL, NULL, 0)< 0)
+			if(send_fast_notify && (notify(subs, NULL, NULL, 0)< 0))
 			{
 				LM_ERR("Could not send notify\n");
 				goto error;

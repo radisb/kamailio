@@ -20,7 +20,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -128,11 +128,11 @@ static cmd_export_t cmds[] = {
  * Exported parameters
  */
 static param_export_t params[] = {
-	{"filename", STR_PARAM, &filename},
-	{"modpath", STR_PARAM, &modpath},
+	{"filename", PARAM_STRING, &filename},
+	{"modpath", PARAM_STRING, &modpath},
 	{"unsafemodfnc", INT_PARAM, &unsafemodfnc},
 	{"reset_cycles", INT_PARAM, &_ap_reset_cycles_init},
-	{"perl_destroy_func",  STR_PARAM, &perl_destroy_func},
+	{"perl_destroy_func",  PARAM_STRING, &perl_destroy_func},
 	{ 0, 0, 0 }
 };
 
@@ -241,6 +241,10 @@ PerlInterpreter *parser_init(void) {
 				} else {
 					LM_INFO("setting lib path: '%s'\n", entry);
 					argv[argc] = pkg_malloc(strlen(entry)+20);
+					if (!argv[argc]) {
+						LM_ERR("not enough pkg mem\n");
+						return NULL;
+					}
 					sprintf(argv[argc], "-I%s", entry);
 					modpathset_end = argc;
 					argc++;

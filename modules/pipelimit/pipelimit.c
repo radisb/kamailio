@@ -21,7 +21,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * ---------
@@ -135,12 +135,12 @@ static cmd_export_t cmds[]={
 static param_export_t params[]={
 	{"timer_interval",       INT_PARAM,          &timer_interval},
 	{"reply_code",           INT_PARAM,          &pl_drop_code},
-	{"reply_reason",         STR_PARAM,          &pl_drop_reason.s},
-	{"db_url",               STR_PARAM,          &pl_db_url},
-	{"plp_table_name",       STR_PARAM,          &rlp_table_name},
-	{"plp_pipeid_column",    STR_PARAM,          &rlp_pipeid_col},
-	{"plp_limit_column",     STR_PARAM,          &rlp_limit_col},
-	{"plp_algorithm_column", STR_PARAM,          &rlp_algorithm_col},
+	{"reply_reason",         PARAM_STR,          &pl_drop_reason},
+	{"db_url",               PARAM_STR,          &pl_db_url},
+	{"plp_table_name",       PARAM_STR,          &rlp_table_name},
+	{"plp_pipeid_column",    PARAM_STR,          &rlp_pipeid_col},
+	{"plp_limit_column",     PARAM_STR,          &rlp_limit_col},
+	{"plp_algorithm_column", PARAM_STR,          &rlp_algorithm_col},
 	{"hash_size",            INT_PARAM,          &pl_hash_size},
 
 	{0,0,0}
@@ -377,8 +377,6 @@ static int mod_init(void)
 	*pid_kd = 0.0;
 	*_pl_pid_setpoint = 0.01 * (double)_pl_cfg_setpoint;
 	*drop_rate      = 0;
-
-	pl_drop_reason.len = strlen(pl_drop_reason.s);
 
 	return 0;
 }
@@ -627,9 +625,9 @@ static int w_pl_check3(struct sip_msg* msg, char *p1pipe, char *p2alg,
 	if(msg==NULL)
 		return -1;
 
-	if(fixup_get_ivalue(msg, (gparam_t*)p3limit, &limit)!=0 || limit<=0)
+	if(fixup_get_ivalue(msg, (gparam_t*)p3limit, &limit)!=0 || limit<0)
 	{
-		LM_ERR("invalid limit value\n");
+		LM_ERR("invalid limit value: %d\n", limit);
 		return -1;
 	}
 
@@ -658,16 +656,19 @@ static int w_pl_check3(struct sip_msg* msg, char *p1pipe, char *p2alg,
 				pipeid.len, pipeid.s);
 			return -2;
 		}
-		pipe = pl_pipe_get(&pipeid, 1);
+		pipe = pl_pipe_get(&pipeid, 0);
 		if(pipe==NULL)
 		{
 			LM_ERR("failed to retrieve pipe [%.*s]\n",
 				pipeid.len, pipeid.s);
 			return -2;
 		}
+	} else {
+		if(limit>0) pipe->limit = limit;
+		pl_pipe_release(&pipe->name);
 	}
 
-	return 1;
+	return pl_check(msg, &pipeid);
 }
 
 static int fixup_pl_check3(void** param, int param_no)
@@ -829,7 +830,7 @@ void rpc_pl_set_pipe(rpc_t *rpc, void *c);
 
 void rpc_pl_get_pid(rpc_t *rpc, void *c) {
 	rpl_pipe_lock(0);
-	rpc->printf(c, "ki[%f] kp[%f] kd[%f] ", *pid_ki, *pid_kp, *pid_kd);
+	rpc->rpl_printf(c, "ki[%f] kp[%f] kd[%f] ", *pid_ki, *pid_kp, *pid_kd);
 	rpl_pipe_release(0);
 }
 

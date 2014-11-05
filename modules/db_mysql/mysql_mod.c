@@ -24,7 +24,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 /*
  * History:
@@ -109,6 +109,7 @@ static param_export_t params[] = {
 	{"timeout_interval", INT_PARAM, &db_mysql_timeout_interval},
 	{"auto_reconnect",   INT_PARAM, &db_mysql_auto_reconnect},
 	{"insert_delayed",   INT_PARAM, &db_mysql_insert_all_delayed},
+	{"update_affected_found", INT_PARAM, &db_mysql_update_affected_found},
 	{0, 0, 0}
 };
 

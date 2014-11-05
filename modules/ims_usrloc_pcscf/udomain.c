@@ -39,7 +39,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  * 
  */
 
@@ -64,6 +64,7 @@
 extern int db_mode;
 extern unsigned int hashing_type;
 extern int lookup_check_received;
+extern int match_contact_host_port;
 
 #ifdef STATISTICS
 static char *build_stat_name( str* domain, char *var_name)
@@ -267,11 +268,11 @@ void mem_timer_udomain(udomain_t* _d)
 	}
 }
 
-void lock_udomain(udomain_t* _d, str* _aor)
+void lock_udomain(udomain_t* _d, str* _aor, str* _received_host, unsigned short received_port)
 {
 	unsigned int sl;
-
-	sl = get_hash_slot(_d, _aor);
+	
+	sl = get_hash_slot(_d, _aor, _received_host, received_port);
 
 #ifdef GEN_LOCK_T_PREFERED
 	lock_get(_d->table[sl].lock);
@@ -280,10 +281,10 @@ void lock_udomain(udomain_t* _d, str* _aor)
 #endif
 }
 
-void unlock_udomain(udomain_t* _d, str* _aor)
+void unlock_udomain(udomain_t* _d, str* _aor, str* _received_host, unsigned short received_port)
 {
 	unsigned int sl;
-	sl = get_hash_slot(_d, _aor);
+	sl = get_hash_slot(_d, _aor, _received_host, received_port);
 #ifdef GEN_LOCK_T_PREFERED
 	lock_release(_d->table[sl].lock);
 #else
@@ -450,7 +451,7 @@ error:
  * @struct pontact** _c - contact to return to if found (null if not found)
  * @return 0 if found <>0 if not
  */
-int get_pcontact(udomain_t* _d, str* _contact, struct pcontact** _c) {
+int get_pcontact(udomain_t* _d, str* _contact, str* _received_host, int received_port, struct pcontact** _c) {
 	unsigned int sl, i, aorhash;
 	struct pcontact* c;
 	ppublic_t* impu;
@@ -462,34 +463,49 @@ int get_pcontact(udomain_t* _d, str* _contact, struct pcontact** _c) {
 		return 1;
 	}
 
+	LM_DBG("Searching for contact in P-CSCF usrloc [%.*s]\n",
+				_contact->len,
+				_contact->s);
+	
 	/* search in cache */
-	aorhash = get_aor_hash(_d, _contact);
+	aorhash = get_aor_hash(_d, _contact, _received_host, received_port);
 	sl = aorhash & (_d->size - 1);
 	c = _d->table[sl].first;
 
 	for (i = 0; i < _d->table[sl].n; i++) {
-		LM_DBG("Searching for contact in P-CSCF usrloc [%.*s]\n",
-				_contact->len,
-				_contact->s);
 
 		if ((c->aorhash == aorhash) && (c->aor.len == _contact->len)
 				&& !memcmp(c->aor.s, _contact->s, _contact->len)) {
 			*_c = c;
 			return 0;
 		}
+		
+		if(match_contact_host_port) {
+		    LM_DBG("Comparing needle user@host:port [%.*s@%.*s:%d] and contact_user@contact_host:port [%.*s@%.*s:%d]\n", needle_uri.user.len, needle_uri.user.s, 
+			    needle_uri.host.len, needle_uri.host.s, needle_uri.port_no,
+			    c->contact_user.len, c->contact_user.s, c->contact_host.len, c->contact_host.s, c->contact_port);
 
+		    if((needle_uri.user.len == c->contact_user.len && (memcmp(needle_uri.user.s, c->contact_user.s, needle_uri.user.len) ==0)) &&
+			    (needle_uri.host.len == c->contact_host.len && (memcmp(needle_uri.host.s, c->contact_host.s, needle_uri.host.len) ==0)) &&
+			    (needle_uri.port_no == c->contact_port)) {
+			LM_DBG("Match!!\n");
+			*_c = c;
+			return 0;
+		    }
+		}
+		
 		LM_DBG("Searching for [%.*s] and comparing to [%.*s]\n", _contact->len, _contact->s, c->aor.len, c->aor.s);
 
 		/* hosts HAVE to match */
-		if (lookup_check_received && ((needle_uri.host.len != c->received_host.len) || (memcmp(needle_uri.host.s, c->contact_host.s, needle_uri.host.len)!=0))) {
+		if (lookup_check_received && ((needle_uri.host.len != c->received_host.len) || (memcmp(needle_uri.host.s, c->received_host.s, needle_uri.host.len)!=0))) {
 			//can't possibly match
+			LM_DBG("Lookup failed for [%.*s <=> %.*s]\n", needle_uri.host.len, needle_uri.host.s, c->received_host.len, c->received_host.s);
 			c = c->next;
 			continue;
 		}
 
 		/* one of the ports must match, either the initial registered port, the received port, or one if the security ports (server) */
-		if ((needle_uri.port_no != c->contact_port)
-				&& (needle_uri.port_no != c->received_proto)) {
+		if ((needle_uri.port_no != c->contact_port) && (needle_uri.port_no != c->received_port)) {
 			//check security ports
 			if (c->security) {
 				switch (c->security->type) {
@@ -536,6 +552,8 @@ int get_pcontact(udomain_t* _d, str* _contact, struct pcontact** _c) {
 		}
 
 		if (!port_match){
+			LM_DBG("Port don't match: %d (contact) %d (received) != %d!\n",
+		c->contact_port, c->received_port, needle_uri.port_no);
 			c = c->next;
 			continue;
 		}
@@ -589,8 +607,9 @@ int get_pcontact_by_src(udomain_t* _d, str * _host, unsigned short _port, unsign
 	sprintf(p, "%d", _port);
 	s_contact.s = c_contact;
 	s_contact.len = strlen(c_contact);
-
-	ret = get_pcontact(_d, &s_contact, _c);
+	
+	LM_DBG("Trying to find contact by src with URI: [%.*s]\n", s_contact.len, s_contact.s);
+	ret = get_pcontact(_d, &s_contact, _host, _port, _c);
 
 	return ret;
 }
@@ -659,10 +678,10 @@ int assert_identity(udomain_t* _d, str * _host, unsigned short _port, unsigned s
 	return 0; /* Nothing found */
 }
 
-int delete_pcontact(udomain_t* _d, str* _aor, struct pcontact* _c)
+int delete_pcontact(udomain_t* _d, str* _aor, str* _received_host, int _received_port, struct pcontact* _c)
 {
 	if (_c==0) {
-		if (get_pcontact(_d, _aor, &_c) > 0) {
+		if (get_pcontact(_d, _aor, _received_host, _received_port, &_c) > 0) {
 			return 0;
 		}
 	}
@@ -900,14 +919,14 @@ int preload_udomain(db1_con_t* _c, udomain_t* _d)
 						aor.len, aor.s, _d->name->s);
 				continue;
 			}
-			lock_udomain(_d, &aor);
+			lock_udomain(_d, &aor, &ci->received_host, ci->received_port);
 
 			if ( (mem_insert_pcontact(_d, &aor, ci, &c)) != 0) {
 				LM_ERR("inserting contact failed\n");
-				unlock_udomain(_d, &aor);
+				unlock_udomain(_d, &aor, &ci->received_host, ci->received_port);
 				goto error1;
 			}
-			unlock_udomain(_d, &aor);
+			unlock_udomain(_d, &aor, &ci->received_host, ci->received_port);
 		}
 
 		if (DB_CAPABILITY(ul_dbf, DB_CAP_FETCH)) {

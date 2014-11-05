@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * ---------
@@ -301,7 +301,7 @@ static int rtpengine_manage1_f(struct sip_msg *, char *, char *);
 
 static int parse_flags(struct ng_flags_parse *, struct sip_msg *, enum rtpe_operation *, const char *);
 
-static int rtpengine_offer_answer(struct sip_msg *msg, const char *flags, int op);
+static int rtpengine_offer_answer(struct sip_msg *msg, const char *flags, int op, int more);
 static int fixup_set_id(void ** param, int param_no);
 static int set_rtpengine_set_f(struct sip_msg * msg, char * str1, char * str2);
 static struct rtpp_set * select_rtpp_set(int id_set);
@@ -339,9 +339,13 @@ static int rtpp_sets=0; /*used in rtpengine_set_store()*/
 static int rtpp_set_count = 0;
 static unsigned int current_msg_id = (unsigned int)-1;
 /* RTP proxy balancing list */
-struct rtpp_set_head * rtpp_set_list =0;
-struct rtpp_set * selected_rtpp_set =0;
-struct rtpp_set * default_rtpp_set=0;
+static struct rtpp_set_head * rtpp_set_list =0;
+static struct rtpp_set * active_rtpp_set =0;
+static struct rtpp_set * selected_rtpp_set_1 =0;
+static struct rtpp_set * selected_rtpp_set_2 =0;
+static struct rtpp_set * default_rtpp_set=0;
+
+static str body_intermediate;
 
 /* array with the sockets used by rtpporxy (per process)*/
 static unsigned int rtpp_no = 0;
@@ -365,6 +369,9 @@ static pv_elem_t *extra_id_pv = NULL;
 
 static cmd_export_t cmds[] = {
 	{"set_rtpengine_set",  (cmd_function)set_rtpengine_set_f,    1,
+		fixup_set_id, 0,
+		ANY_ROUTE},
+	{"set_rtpengine_set",  (cmd_function)set_rtpengine_set_f,    2,
 		fixup_set_id, 0,
 		ANY_ROUTE},
 	{"start_recording",    (cmd_function)start_recording_f,      0,
@@ -404,16 +411,16 @@ static pv_export_t mod_pvs[] = {
 };
 
 static param_export_t params[] = {
-	{"rtpengine_sock",        STR_PARAM|USE_FUNC_PARAM,
+	{"rtpengine_sock",        PARAM_STRING|USE_FUNC_PARAM,
 	                         (void*)rtpengine_set_store          },
 	{"rtpengine_disable_tout",INT_PARAM, &rtpengine_disable_tout },
 	{"rtpengine_retr",        INT_PARAM, &rtpengine_retr         },
 	{"rtpengine_tout",        INT_PARAM, &rtpengine_tout         },
-	{"db_url",                STR_PARAM, &rtpp_db_url.s },
-	{"table_name",            STR_PARAM, &rtpp_table_name.s },
-	{"url_col",               STR_PARAM, &rtpp_url_col.s },
-	{"extra_id_pv",           STR_PARAM, &extra_id_pv_param.s },
-	{"setid_avp",             STR_PARAM, &setid_avp_param },
+	{"db_url",                PARAM_STR, &rtpp_db_url },
+	{"table_name",            PARAM_STR, &rtpp_table_name },
+	{"url_col",               PARAM_STR, &rtpp_url_col },
+	{"extra_id_pv",           PARAM_STR, &extra_id_pv_param },
+	{"setid_avp",             PARAM_STRING, &setid_avp_param },
 	{0, 0, 0}
 };
 
@@ -918,9 +925,6 @@ mod_init(void)
 		return -1;
 	}
 
-	rtpp_table_name.len = strlen(rtpp_table_name.s);
-	rtpp_url_col.len = strlen(rtpp_url_col.s);
-
 	/* any rtpproxy configured? */
 	if(rtpp_set_list)
 		default_rtpp_set = select_rtpp_set(DEFAULT_RTPP_SET_ID);
@@ -1188,6 +1192,8 @@ static int parse_flags(struct ng_flags_parse *ng_flags, struct sip_msg *msg, enu
 					ng_flags->transport |= 0x100;
 					ng_flags->transport &= ~0x002;
 				}
+				else if (str_eq(&key, "TOS") && val.s)
+					bencode_dictionary_add_integer(ng_flags->dict, "TOS", atoi(val.s));
 				else
 					goto generic;
 				goto next;
@@ -1230,10 +1236,13 @@ static int parse_flags(struct ng_flags_parse *ng_flags, struct sip_msg *msg, enu
 				break;
 
 			case 9:
-				if (str_eq(&key, "RTP/SAVPF")) {
+				if (str_eq(&key, "RTP/SAVPF"))
 					ng_flags->transport = 0x103;
-					goto next;
-				}
+				else if (str_eq(&key, "direction"))
+					bencode_list_add_str(ng_flags->direction, &val);
+				else
+					goto generic;
+				goto next;
 				break;
 
 			case 10:
@@ -1338,6 +1347,7 @@ static bencode_item_t *rtpp_function_call(bencode_buffer_t *bencbuf, struct sip_
 	}
 	ng_flags.dict = bencode_dictionary(bencbuf);
 
+	body.s = NULL;
 	if (op == OP_OFFER || op == OP_ANSWER) {
 		ng_flags.flags = bencode_list(bencbuf);
 		ng_flags.direction = bencode_list(bencbuf);
@@ -1348,7 +1358,10 @@ static bencode_item_t *rtpp_function_call(bencode_buffer_t *bencbuf, struct sip_
 			LM_ERR("can't extract body from the message\n");
 			goto error;
 		}
-		bencode_dictionary_add_str(ng_flags.dict, "sdp", &body);
+		if (body_intermediate.s)
+			bencode_dictionary_add_str(ng_flags.dict, "sdp", &body_intermediate);
+		else
+			bencode_dictionary_add_str(ng_flags.dict, "sdp", &body);
 	}
 
 	/*** parse flags & build dictionary ***/
@@ -1421,7 +1434,7 @@ static bencode_item_t *rtpp_function_call(bencode_buffer_t *bencbuf, struct sip_
 	}
 
 	if(msg->id != current_msg_id)
-		selected_rtpp_set = default_rtpp_set;
+		active_rtpp_set = default_rtpp_set;
 
 	do {
 		node = select_rtpp_node(callid, 1);
@@ -1692,13 +1705,13 @@ select_rtpp_node(str callid, int do_test)
 	struct rtpp_node* node;
 	int was_forced;
 
-	if(!selected_rtpp_set){
+	if(!active_rtpp_set){
 		LM_ERR("script error -no valid set selected\n");
 		return NULL;
 	}
 	/* Most popular case: 1 proxy, nothing to calculate */
-	if (selected_rtpp_set->rtpp_node_count == 1) {
-		node = selected_rtpp_set->rn_first;
+	if (active_rtpp_set->rtpp_node_count == 1) {
+		node = active_rtpp_set->rn_first;
 		if (node->rn_disabled && node->rn_recheck_ticks <= get_ticks())
 			node->rn_disabled = rtpp_test(node, 1, 0);
 		return node->rn_disabled ? NULL : node;
@@ -1712,7 +1725,7 @@ select_rtpp_node(str callid, int do_test)
 	was_forced = 0;
 retry:
 	weight_sum = 0;
-	for (node=selected_rtpp_set->rn_first; node!=NULL; node=node->rn_next) {
+	for (node=active_rtpp_set->rn_first; node!=NULL; node=node->rn_next) {
 
 		if (node->rn_disabled && node->rn_recheck_ticks <= get_ticks()){
 			/* Try to enable if it's time to try. */
@@ -1726,7 +1739,7 @@ retry:
 		if (was_forced)
 			return NULL;
 		was_forced = 1;
-		for(node=selected_rtpp_set->rn_first; node!=NULL; node=node->rn_next) {
+		for(node=active_rtpp_set->rn_first; node!=NULL; node=node->rn_next) {
 			node->rn_disabled = rtpp_test(node, 1, 1);
 		}
 		goto retry;
@@ -1736,7 +1749,7 @@ retry:
 	 * sumcut here lays from 0 to weight_sum-1.
 	 * Scan proxy list and decrease until appropriate proxy is found.
 	 */
-	for (node=selected_rtpp_set->rn_first; node!=NULL; node=node->rn_next) {
+	for (node=active_rtpp_set->rn_first; node!=NULL; node=node->rn_next) {
 		if (node->rn_disabled)
 			continue;
 		if (sumcut < node->rn_weight)
@@ -1770,7 +1783,7 @@ get_extra_id(struct sip_msg* msg, str *id_str) {
 }
 
 static int
-set_rtpengine_set_from_avp(struct sip_msg *msg)
+set_rtpengine_set_from_avp(struct sip_msg *msg, int direction)
 {
     struct usr_avp *avp;
     int_str setid_val;
@@ -1778,15 +1791,21 @@ set_rtpengine_set_from_avp(struct sip_msg *msg)
     if ((setid_avp_param == NULL) ||
 	(avp = search_first_avp(setid_avp_type, setid_avp, &setid_val, 0))
 	== NULL)
-	return 1;
+    {
+	    if (direction == 1 || !selected_rtpp_set_2)
+		    active_rtpp_set = selected_rtpp_set_1;
+	    else
+		    active_rtpp_set = selected_rtpp_set_2;
+	    return 1;
+    }
 
     if (avp->flags&AVP_VAL_STR) {
 	LM_ERR("setid_avp must hold an integer value\n");
 	return -1;
     }
 
-    selected_rtpp_set = select_rtpp_set(setid_val.n);
-    if(selected_rtpp_set == NULL) {
+    active_rtpp_set = select_rtpp_set(setid_val.n);
+    if(active_rtpp_set == NULL) {
 	LM_ERR("could not locate rtpproxy set %d\n", setid_val.n);
 	return -1;
     }
@@ -1802,76 +1821,127 @@ static int rtpengine_delete(struct sip_msg *msg, const char *flags) {
 	return rtpp_function_call_simple(msg, OP_DELETE, flags);
 }
 
+static int rtpengine_rtpp_set_wrap(struct sip_msg *msg, int (*func)(struct sip_msg *msg, void *, int),
+		void *data, int direction)
+{
+	int ret, more;
+
+	body_intermediate.s = NULL;
+
+	if (set_rtpengine_set_from_avp(msg, direction) == -1)
+	    return -1;
+
+	more = 1;
+	if (!selected_rtpp_set_2 || selected_rtpp_set_2 == selected_rtpp_set_1)
+		more = 0;
+
+	ret = func(msg, data, more);
+	if (ret < 0)
+		return ret;
+
+	if (!more)
+		return ret;
+
+	direction = (direction == 1) ? 2 : 1;
+	if (set_rtpengine_set_from_avp(msg, direction) == -1)
+	    return -1;
+
+	ret = func(msg, data, 0);
+	body_intermediate.s = NULL;
+	return ret;
+}
+
+static int rtpengine_delete_wrap(struct sip_msg *msg, void *d, int more) {
+	return rtpengine_delete(msg, d);
+}
+
 static int
 rtpengine_delete1_f(struct sip_msg* msg, char* str1, char* str2)
 {
 	str flags;
 
-	if (set_rtpengine_set_from_avp(msg) == -1)
-	    return -1;
-
 	flags.s = NULL;
 	if (str1)
 		get_str_fparam(&flags, msg, (fparam_t *) str1);
 
-	return rtpengine_delete(msg, flags.s);
+	return rtpengine_rtpp_set_wrap(msg, rtpengine_delete_wrap, flags.s, 1);
 }
 
 /* This function assumes p points to a line of requested type. */
 
 static int
-set_rtpengine_set_f(struct sip_msg * msg, char * str1, char * str2)
+set_rtpengine_set_n(struct sip_msg *msg, rtpp_set_link_t *rtpl, struct rtpp_set **out)
 {
-	rtpp_set_link_t *rtpl;
 	pv_value_t val;
 	struct rtpp_node *node;
-	int nb_active_nodes;
-
-	rtpl = (rtpp_set_link_t*)str1;
-
-	current_msg_id = 0;
-	selected_rtpp_set = 0;
-	nb_active_nodes = 0;
+	int nb_active_nodes = 0;
 
 	if(rtpl->rset != NULL) {
 		current_msg_id = msg->id;
-		selected_rtpp_set = rtpl->rset;
-	} else {
-		if(pv_get_spec_value(msg, rtpl->rpv, &val)<0) {
-			LM_ERR("cannot evaluate pv param\n");
-			return -1;
-		}
-		if(!(val.flags & PV_VAL_INT)) {
-			LM_ERR("pv param must hold an integer value\n");
-			return -1;
-		}
-		selected_rtpp_set = select_rtpp_set(val.ri);
-		if(selected_rtpp_set==NULL) {
-			LM_ERR("could not locate rtpengine set %d\n", val.ri);
-			return -1;
-		}
-		current_msg_id = msg->id;
-
-		node = selected_rtpp_set->rn_first;
-		while (node != NULL)
-		{
-		    if (node->rn_disabled == 0) nb_active_nodes++;
-		    node = node->rn_next;
-		}
-
-		if ( nb_active_nodes > 0 )
-		{
-			LM_DBG("rtpp: selected proxy set ID %d with %d active nodes.\n",
-			       current_msg_id, nb_active_nodes);
-			return nb_active_nodes;
-		}
-		else
-		{
-			LM_WARN("rtpp: selected proxy set ID %d but it has no active node.\n",
-			         current_msg_id);
-			return -2;
-		}
+		*out = rtpl->rset;
+		return 1;
 	}
+
+	if(pv_get_spec_value(msg, rtpl->rpv, &val)<0) {
+		LM_ERR("cannot evaluate pv param\n");
+		return -1;
+	}
+	if(!(val.flags & PV_VAL_INT)) {
+		LM_ERR("pv param must hold an integer value\n");
+		return -1;
+	}
+	*out = select_rtpp_set(val.ri);
+	if(*out==NULL) {
+		LM_ERR("could not locate rtpengine set %d\n", val.ri);
+		return -1;
+	}
+	current_msg_id = msg->id;
+
+	node = (*out)->rn_first;
+	while (node != NULL)
+	{
+	    if (node->rn_disabled == 0) nb_active_nodes++;
+	    node = node->rn_next;
+	}
+
+	if ( nb_active_nodes > 0 )
+	{
+		LM_DBG("rtpp: selected proxy set ID %d with %d active nodes.\n",
+		       current_msg_id, nb_active_nodes);
+		return nb_active_nodes;
+	}
+	else
+	{
+		LM_WARN("rtpp: selected proxy set ID %d but it has no active node.\n",
+			 current_msg_id);
+		return -2;
+	}
+}
+
+static int
+set_rtpengine_set_f(struct sip_msg * msg, char * str1, char * str2)
+{
+	rtpp_set_link_t *rtpl1, *rtpl2;
+	int ret;
+
+	rtpl1 = (rtpp_set_link_t*)str1;
+	rtpl2 = (rtpp_set_link_t*)str2;
+
+	current_msg_id = 0;
+	active_rtpp_set = 0;
+	selected_rtpp_set_1 = 0;
+	selected_rtpp_set_2 = 0;
+
+	ret = set_rtpengine_set_n(msg, rtpl1, &selected_rtpp_set_1);
+	if (ret < 0)
+		return ret;
+
+	if (rtpl2) {
+		ret = set_rtpengine_set_n(msg, rtpl2, &selected_rtpp_set_2);
+		if (ret < 0)
+			return ret;
+	}
+
 	return 1;
 }
 
@@ -1904,9 +1974,9 @@ rtpengine_manage(struct sip_msg *msg, const char *flags)
 
 	if(msg->first_line.type == SIP_REQUEST) {
 		if(method==METHOD_ACK && nosdp==0)
-			return rtpengine_offer_answer(msg, flags, OP_ANSWER);
+			return rtpengine_offer_answer(msg, flags, OP_ANSWER, 0);
 		if(method==METHOD_UPDATE && nosdp==0)
-			return rtpengine_offer_answer(msg, flags, OP_OFFER);
+			return rtpengine_offer_answer(msg, flags, OP_OFFER, 0);
 		if(method==METHOD_INVITE && nosdp==0) {
 			msg->msg_flags |= FL_SDP_BODY;
 			if(tmb.t_gett!=NULL && tmb.t_gett()!=NULL
@@ -1914,23 +1984,27 @@ rtpengine_manage(struct sip_msg *msg, const char *flags)
 				tmb.t_gett()->uas.request->msg_flags |= FL_SDP_BODY;
 			if(route_type==FAILURE_ROUTE)
 				return rtpengine_delete(msg, flags);
-			return rtpengine_offer_answer(msg, flags, OP_OFFER);
+			return rtpengine_offer_answer(msg, flags, OP_OFFER, 0);
 		}
 	} else if(msg->first_line.type == SIP_REPLY) {
 		if(msg->first_line.u.reply.statuscode>=300)
 			return rtpengine_delete(msg, flags);
 		if(nosdp==0) {
 			if(method==METHOD_UPDATE)
-				return rtpengine_offer_answer(msg, flags, OP_ANSWER);
+				return rtpengine_offer_answer(msg, flags, OP_ANSWER, 0);
 			if(tmb.t_gett==NULL || tmb.t_gett()==NULL
 					|| tmb.t_gett()==T_UNDEFINED)
-				return rtpengine_offer_answer(msg, flags, OP_ANSWER);
+				return rtpengine_offer_answer(msg, flags, OP_ANSWER, 0);
 			if(tmb.t_gett()->uas.request->msg_flags & FL_SDP_BODY)
-				return rtpengine_offer_answer(msg, flags, OP_ANSWER);
-			return rtpengine_offer_answer(msg, flags, OP_OFFER);
+				return rtpengine_offer_answer(msg, flags, OP_ANSWER, 0);
+			return rtpengine_offer_answer(msg, flags, OP_OFFER, 0);
 		}
 	}
 	return -1;
+}
+
+static int rtpengine_manage_wrap(struct sip_msg *msg, void *d, int more) {
+	return rtpengine_manage(msg, d);
 }
 
 static int
@@ -1938,14 +2012,15 @@ rtpengine_manage1_f(struct sip_msg *msg, char *str1, char *str2)
 {
 	str flags;
 
-	if (set_rtpengine_set_from_avp(msg) == -1)
-	    return -1;
-
 	flags.s = NULL;
 	if (str1)
 		get_str_fparam(&flags, msg, (fparam_t *) str1);
 
-	return rtpengine_manage(msg, flags.s);
+	return rtpengine_rtpp_set_wrap(msg, rtpengine_manage_wrap, flags.s, 1);
+}
+
+static int rtpengine_offer_wrap(struct sip_msg *msg, void *d, int more) {
+	return rtpengine_offer_answer(msg, d, OP_OFFER, more);
 }
 
 static int
@@ -1953,22 +2028,21 @@ rtpengine_offer1_f(struct sip_msg *msg, char *str1, char *str2)
 {
 	str flags;
 
-	if (set_rtpengine_set_from_avp(msg) == -1)
-	    return -1;
-
 	flags.s = NULL;
 	if (str1)
 		get_str_fparam(&flags, msg, (fparam_t *) str1);
-	return rtpengine_offer_answer(msg, flags.s, OP_OFFER);
+
+	return rtpengine_rtpp_set_wrap(msg, rtpengine_offer_wrap, flags.s, 1);
+}
+
+static int rtpengine_answer_wrap(struct sip_msg *msg, void *d, int more) {
+	return rtpengine_offer_answer(msg, d, OP_ANSWER, more);
 }
 
 static int
 rtpengine_answer1_f(struct sip_msg *msg, char *str1, char *str2)
 {
 	str flags;
-
-	if (set_rtpengine_set_from_avp(msg) == -1)
-	    return -1;
 
 	if (msg->first_line.type == SIP_REQUEST)
 		if (msg->first_line.u.request.method_value != METHOD_ACK)
@@ -1977,11 +2051,12 @@ rtpengine_answer1_f(struct sip_msg *msg, char *str1, char *str2)
 	flags.s = NULL;
 	if (str1)
 		get_str_fparam(&flags, msg, (fparam_t *) str1);
-	return rtpengine_offer_answer(msg, flags.s, OP_ANSWER);
+
+	return rtpengine_rtpp_set_wrap(msg, rtpengine_answer_wrap, flags.s, 2);
 }
 
 static int
-rtpengine_offer_answer(struct sip_msg *msg, const char *flags, int op)
+rtpengine_offer_answer(struct sip_msg *msg, const char *flags, int op, int more)
 {
 	bencode_buffer_t bencbuf;
 	bencode_item_t *dict;
@@ -1997,14 +2072,21 @@ rtpengine_offer_answer(struct sip_msg *msg, const char *flags, int op)
 		goto error;
 	}
 
-	anchor = del_lump(msg, body.s - msg->buf, body.len, 0);
-	if (!anchor) {
-		LM_ERR("del_lump failed\n");
-		goto error_free;
-	}
-	if (!insert_new_lump_after(anchor, newbody.s, newbody.len, 0)) {
-		LM_ERR("insert_new_lump_after failed\n");
-		goto error_free;
+	if (body_intermediate.s)
+		pkg_free(body_intermediate.s);
+
+	if (more)
+		body_intermediate = newbody;
+	else {
+		anchor = del_lump(msg, body.s - msg->buf, body.len, 0);
+		if (!anchor) {
+			LM_ERR("del_lump failed\n");
+			goto error_free;
+		}
+		if (!insert_new_lump_after(anchor, newbody.s, newbody.len, 0)) {
+			LM_ERR("insert_new_lump_after failed\n");
+			goto error_free;
+		}
 	}
 
 	bencode_buffer_free(&bencbuf);
@@ -2018,10 +2100,14 @@ error:
 }
 
 
+static int rtpengine_start_recording_wrap(struct sip_msg *msg, void *d, int more) {
+	return rtpp_function_call_simple(msg, OP_START_RECORDING, NULL);
+}
+
 static int
 start_recording_f(struct sip_msg* msg, char *foo, char *bar)
 {
-	return rtpp_function_call_simple(msg, OP_START_RECORDING, NULL);
+	return rtpengine_rtpp_set_wrap(msg, rtpengine_start_recording_wrap, NULL, 1);
 }
 
 /*

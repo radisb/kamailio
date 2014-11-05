@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*! \file
@@ -600,9 +600,9 @@ int sql_do_pvquery(struct sip_msg *msg, sql_con_t *con, pv_elem_t *query,
 				LM_ERR("Missing pv spec for column %d\n", j+1);
 				goto error;
 			}
-			if (db_val2pv_spec(msg, &RES_ROWS(db_res)[0].values[j], &pv->sname) != 0) {
-				LM_ERR("Failed to convert value for column %.*s\n",
-				       RES_NAMES(db_res)[j]->len, RES_NAMES(db_res)[j]->s);
+			if (db_val2pv_spec(msg, &RES_ROWS(db_res)[i].values[j], &pv->sname) != 0) {
+				LM_ERR("Failed to convert value for column %.*s (row %d)\n",
+				       RES_NAMES(db_res)[j]->len, RES_NAMES(db_res)[j]->s, i);
 				goto error;
 			}
 			pv = pv->next;

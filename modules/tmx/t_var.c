@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 #include "../../mem/mem.h"
@@ -487,6 +487,7 @@ int pv_get_tm_reply_code(struct sip_msg *msg, pv_param_t *param,
 	} else {
 		switch (get_route_type()) {
 			case REQUEST_ROUTE:
+			case BRANCH_ROUTE:
 				/* use the status of the last sent reply */
 				code = t->uas.status;
 				break;
@@ -734,7 +735,7 @@ int pv_get_t_branch(struct sip_msg *msg,  pv_param_t *param,
 	    }
 	    res->ri = t->uac[branch].branch_flags;
 	    res->flags = PV_VAL_INT;
-	    LM_INFO("branch flags is [%u]\n", res->ri);
+	    LM_DBG("branch flags is [%u]\n", res->ri);
 	    break;
 	default:
 	    LM_ERR("unsupported route_type %d\n", get_route_type());

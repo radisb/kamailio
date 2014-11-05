@@ -40,7 +40,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * ----------
@@ -936,7 +936,7 @@ int t_reply_matching( struct sip_msg *p_msg , int *p_branch )
 	if (unlikely(reverse_hex2int(hashi, hashl, &hash_index)<0
 		||hash_index>=TABLE_ENTRIES
 		|| reverse_hex2int(branchi, branchl, &branch_id)<0
-		||branch_id>=MAX_BRANCHES
+		|| branch_id>=sr_dst_max_branches
 		|| loopl!=MD5_LEN)
 	) {
 		DBG("DEBUG: t_reply_matching: poor reply labels %d label %d "

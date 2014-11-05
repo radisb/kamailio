@@ -39,7 +39,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  * 
  */
 
@@ -60,10 +60,9 @@
 #include "usrloc.h"
 #include "hslot_sp.h"
 #include "usrloc_db.h"
-
+#include "contact_hslot.h"
 #include "../presence/bind_presence.h"
 #include "../presence/hash.h"
-
 #include "../../modules/dialog_ng/dlg_load.h"
 #include "../../modules/dialog_ng/dlg_hash.h"
 
@@ -81,6 +80,7 @@ static int child_init(int rank);                    /*!< Per-child init function
 extern int bind_usrloc(usrloc_api_t* api);
 extern int ul_locks_no;
 extern int subs_locks_no;
+extern int contacts_locks_no;
 /*
  * Module parameters and their default values
  */
@@ -98,6 +98,9 @@ int maxcontact_behaviour = 0;			/*!< max contact behaviour - 0-disabled(default)
 int ul_fetch_rows = 2000;				/*!< number of rows to fetch from result */
 int ul_hash_size = 9;
 int subs_hash_size = 9;					/*!<number of ims subscription slots*/
+int contacts_hash_size = 9;
+
+struct contact_list* contact_list;
 
 int db_mode = 0;						/*!<database mode*/
 db1_con_t* ul_dbh = 0;
@@ -142,17 +145,17 @@ static param_export_t params[] = {
 	{"hash_size",         	INT_PARAM, &ul_hash_size    },
 	{"subs_hash_size",    	INT_PARAM, &subs_hash_size  },
 	{"nat_bflag",         	INT_PARAM, &nat_bflag       },
-	{"usrloc_debug_file", 	STR_PARAM, &usrloc_debug_file.s},
+	{"usrloc_debug_file", 	PARAM_STR, &usrloc_debug_file},
 	{"enable_debug_file", 	INT_PARAM, &usrloc_debug},
-    {"user_data_dtd",     	STR_PARAM, &scscf_user_data_dtd},
-    {"user_data_xsd",     	STR_PARAM, &scscf_user_data_xsd},
+    {"user_data_dtd",     	PARAM_STRING, &scscf_user_data_dtd},
+    {"user_data_xsd",     	PARAM_STRING, &scscf_user_data_xsd},
     {"support_wildcardPSI",	INT_PARAM, &scscf_support_wildcardPSI},
     {"unreg_validity",		INT_PARAM, &unreg_validity},
     {"maxcontact_behaviour",INT_PARAM, &maxcontact_behaviour},
     {"maxcontact",			INT_PARAM, &maxcontact},
     {"sub_dialog_hash_size",INT_PARAM, &sub_dialog_hash_size},
     {"db_mode",				INT_PARAM, &db_mode},
-    {"db_url", 				STR_PARAM, &db_url.s},
+    {"db_url", 				PARAM_STR, &db_url},
 	{0, 0, 0}
 };
 
@@ -188,7 +191,7 @@ struct module_exports exports = {
  * Module initialization function
  */
 static int mod_init(void) {
-
+	int i;
 	load_dlg_f load_dlg;
 	if (usrloc_debug){
 		LM_INFO("Logging usrloc records to %.*s\n", usrloc_debug_file.len, usrloc_debug_file.s);
@@ -210,11 +213,6 @@ static int mod_init(void) {
 		return -1;
 	}
 
-	db_url.len = strlen(db_url.s);
-
-	/* Compute the lengths of string parameters */
-	usrloc_debug_file.len = strlen(usrloc_debug_file.s);
-
 	if (ul_hash_size <= 1)
 		ul_hash_size = 512;
 	else
@@ -226,12 +224,19 @@ static int mod_init(void) {
 	else
 		subs_hash_size = 1 << subs_hash_size;
 	subs_locks_no = subs_hash_size;
+	
+	if (contacts_hash_size <= 1)
+		contacts_hash_size = 512;
+	else
+		contacts_hash_size = 1 << contacts_hash_size;
+	contacts_locks_no = contacts_hash_size;
 
 	/* check matching mode */
 	switch (matching_mode) {
 		case CONTACT_ONLY:
 		case CONTACT_CALLID:
 		case CONTACT_PATH:
+		case CONTACT_PORT_IP_ONLY:
 			break;
 		default:
 			LM_ERR("invalid matching mode %d\n", matching_mode);
@@ -246,7 +251,27 @@ static int mod_init(void) {
 		LM_ERR("IMS Subscription locks array initialization failed\n");
 		return -1;
 	}
-
+	
+	/* create hash table for storing registered contacts */
+	if (init_contacts_locks() !=0) {
+	    LM_ERR("failed to initialise locks array for contacts\n");
+	    return -1;
+	}
+	contact_list = (struct contact_list*)shm_malloc(sizeof(struct contact_list));
+	if (!contact_list) {
+	    LM_ERR("no more memory to create contact list structure\n");
+	    return -1;
+	}
+	contact_list->slot = (struct contact_hslot*) shm_malloc(sizeof(struct contact_hslot) * contacts_hash_size);
+	if (!contact_list->slot) {
+	    LM_ERR("no more memory to create contact list structure\n");
+	    return -1;
+	}
+	for (i=0; i<contacts_hash_size;i++) {
+	    init_contact_slot(&contact_list->slot[i], i);
+	} 
+	contact_list->size = contacts_hash_size;
+	
 	/* presence binding for subscribe processing*/
 	presence_api_t pres;
 	bind_presence_t bind_presence;
@@ -399,6 +424,8 @@ static void destroy(void) {
 
 	free_all_udomains();
 	ul_destroy_locks();
+	subs_destroy_locks();
+	destroy_contacts_locks();
 
 	/* free callbacks list */
 	destroy_ulcb_list();

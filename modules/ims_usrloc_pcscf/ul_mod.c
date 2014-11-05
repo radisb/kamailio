@@ -39,7 +39,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  * 
  */
 
@@ -86,6 +86,7 @@ int ul_fetch_rows 	= 2000;
 int hashing_type 	= 0;						/*!< has type for storing P-CSCF contacts - 0 - use full contact AOR, 1 - use IP:PORT only */
 
 int lookup_check_received = 1;						/*!< Should we check received on lookup? */
+int match_contact_host_port = 1;					/*!< Should we match contact just based on rui host and port*/
 
 db1_con_t* ul_dbh = 0;
 db_func_t ul_dbf; 
@@ -104,14 +105,15 @@ static cmd_export_t cmds[] = {
 static param_export_t params[] = {
 	{"hash_size",         INT_PARAM, &ul_hash_size    },
 	{"timer_interval",    INT_PARAM, &timer_interval  },
-	{"usrloc_debug_file", STR_PARAM, &usrloc_debug_file.s},
+	{"usrloc_debug_file", PARAM_STR, &usrloc_debug_file },
 	{"enable_debug_file", INT_PARAM, &usrloc_debug},
 
-	{"db_url",              STR_PARAM, &db_url.s        },
+	{"db_url",              PARAM_STR, &db_url        },
 	{"timer_interval",      INT_PARAM, &timer_interval  },
 	{"db_mode",             INT_PARAM, &db_mode         },
 	{"hashing_type",		INT_PARAM, &hashing_type	},
 	{"lookup_check_received",		INT_PARAM, &lookup_check_received	},
+	{"match_contact_host_port",		INT_PARAM, &match_contact_host_port	},
 
 	{0, 0, 0}
 };
@@ -163,9 +165,6 @@ static int mod_init(void) {
 	}
 #endif
 
-	/* Compute the lengths of string parameters */
-	usrloc_debug_file.len = strlen(usrloc_debug_file.s);
-
 	if (ul_hash_size <= 1)
 		ul_hash_size = 512;
 	else
@@ -176,8 +175,6 @@ static int mod_init(void) {
 		LM_ERR("locks array initialization failed\n");
 		return -1;
 	}
-
-	db_url.len = strlen(db_url.s);
 
 	/* Regsiter RPC */
 	if (rpc_register_array(ul_rpc) != 0) {

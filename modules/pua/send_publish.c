@@ -19,7 +19,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * --------
@@ -274,6 +274,7 @@ void publ_cback_func(struct cell *t, int type, struct tmcb_params *ps)
 			publ.content_type= hentity->content_type;	
 			publ.id= hentity->id;
 			publ.extra_headers= hentity->extra_headers;
+			publ.outbound_proxy = hentity->outbound_proxy;
 			publ.cb_param= hentity->cb_param;
 
 			if (dbmode == PUA_DB_ONLY && pua_dbf.end_transaction)
@@ -333,7 +334,7 @@ void publ_cback_func(struct cell *t, int type, struct tmcb_params *ps)
 	etag= hdr->body;
 		
 	LM_DBG("completed with status %d [contact:%.*s]\n",
-			ps->code, hentity->pres_uri->len, hentity->pres_uri->s);
+	       ps->code, hentity->pres_uri->len, hentity->pres_uri->s);
 
 	if (lexpire == 0)
 	{
@@ -341,14 +342,15 @@ void publ_cback_func(struct cell *t, int type, struct tmcb_params *ps)
 		goto done;
 	}
 
-	if (pua_dbf.affected_rows != NULL || dbmode != PUA_DB_ONLY)
-	{
-		if (find_and_update_record(hentity, hash_code, lexpire, &etag) > 0)
-			goto done;
-	}
-	else
-	{
-		if ((db_presentity = get_record_puadb(hentity->id, &hentity->etag, &dbpres, &res)) != NULL)
+	if (hentity->etag.s) {
+		if (pua_dbf.affected_rows != NULL || dbmode != PUA_DB_ONLY) {
+			if (find_and_update_record(hentity, hash_code,
+						   lexpire, &etag) > 0)
+				goto done;
+		}
+		else if ((db_presentity =
+			  get_record_puadb(hentity->id, &hentity->etag,
+					   &dbpres, &res)) != NULL)
 		{
 			update_record_puadb(hentity, lexpire, &etag);
 			goto done;
@@ -426,7 +428,7 @@ void publ_cback_func(struct cell *t, int type, struct tmcb_params *ps)
 		insert_htable(presentity, hash_code);
 		lock_release(&HashT->p_records[hash_code].lock);
 	}
-	LM_DBG("***Inserted in hash table\n");
+	LM_DBG("Inserted record\n");
 
 done:
 	if(hentity->ua_flag == REQ_OTHER)
@@ -517,11 +519,14 @@ int send_publish( publ_info_t* publ )
 
 	if (dbmode==PUA_DB_ONLY)
 	{
-		memset(&dbpres, 0, sizeof(dbpres));
-		dbpres.pres_uri = &pres_uri;
-		dbpres.watcher_uri = &watcher_uri;
-		dbpres.extra_headers = &extra_headers;
-		presentity = get_record_puadb(publ->id, publ->etag, &dbpres, &res);
+		if (publ->etag) {
+			memset(&dbpres, 0, sizeof(dbpres));
+			dbpres.pres_uri = &pres_uri;
+			dbpres.watcher_uri = &watcher_uri;
+			dbpres.extra_headers = &extra_headers;
+			presentity = get_record_puadb(publ->id, publ->etag,
+						      &dbpres, &res);
+		}
 	}
 	else
 	{
@@ -582,7 +587,7 @@ insert:
 	}
 	else
 	{
-		LM_DBG("record found in hash_table\n");
+		LM_DBG("record found\n");
 		publ->flag= UPDATE_TYPE;
 		etag.s= (char*)pkg_malloc(presentity->etag.len* sizeof(char));
 		if(etag.s== NULL)
@@ -688,8 +693,9 @@ send_publish:
 	result= tmb.t_request(&uac_r,
 			publ->pres_uri,			/*! Request-URI */
 			publ->pres_uri,			/*! To */
-			publ->pres_uri,			/*! From */
-			&outbound_proxy		/*! Outbound proxy*/
+ 		        publ->pres_uri,			/*! From */
+		        publ->outbound_proxy?
+			      publ->outbound_proxy:&outbound_proxy /*! Outbound proxy*/
 			);
 
 	if(result< 0)
@@ -753,6 +759,9 @@ ua_pres_t* publish_cbparam(publ_info_t* publ,str* body,str* tuple_id,
 
 	size= sizeof(ua_pres_t)+ sizeof(str)+ (publ->pres_uri->len+ 
 		+ publ->content_type.len+ publ->id.len+ 1)*sizeof(char);
+
+	if(publ->outbound_proxy)
+		size+= sizeof(str)+ publ->outbound_proxy->len* sizeof(char);
 	if(body && body->s && body->len)
 		size+= sizeof(str)+ body->len* sizeof(char);
 	if(publ->etag)
@@ -818,6 +827,16 @@ ua_pres_t* publish_cbparam(publ_info_t* publ,str* body,str* tuple_id,
 		cb_param->extra_headers->len= publ->extra_headers->len;
 		size+= publ->extra_headers->len;
 	}	
+	if(publ->outbound_proxy)
+	{
+		cb_param->outbound_proxy = (str*)((char*)cb_param + size);
+		size += sizeof(str);
+		cb_param->outbound_proxy->s = (char*)cb_param + size;
+		memcpy(cb_param->outbound_proxy->s, publ->outbound_proxy->s,
+		       publ->outbound_proxy->len);
+		cb_param->outbound_proxy->len = publ->outbound_proxy->len;
+		size+= publ->outbound_proxy->len;
+	}	
 
 	if(publ->content_type.s && publ->content_type.len)
 	{
@@ -833,6 +852,7 @@ ua_pres_t* publish_cbparam(publ_info_t* publ,str* body,str* tuple_id,
 		cb_param->tuple_id.len= tuple_id->len;
 		size+= tuple_id->len;
 	}
+
 	cb_param->event= publ->event;
 	cb_param->flag|= publ->source_flag;
 	cb_param->cb_param= publ->cb_param;

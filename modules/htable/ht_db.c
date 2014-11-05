@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 #include <stdio.h>
@@ -54,15 +54,9 @@ int ht_db_init_params(void)
 
 	if(ht_fetch_rows<=0)
 		ht_fetch_rows = 100;
-	if(ht_array_size_suffix.s==NULL || ht_array_size_suffix.s[0]=='\0')
+	if(ht_array_size_suffix.s==NULL || ht_array_size_suffix.len<=0)
 		ht_array_size_suffix.s = "::size";
-	ht_array_size_suffix.len = strlen(ht_array_size_suffix.s);
 
-	ht_db_url.len   = strlen(ht_db_url.s);
-	ht_db_name_column.len   = strlen(ht_db_name_column.s);
-	ht_db_ktype_column.len  = strlen(ht_db_ktype_column.s);
-	ht_db_vtype_column.len  = strlen(ht_db_vtype_column.s);
-	ht_db_value_column.len  = strlen(ht_db_value_column.s);
 	return 0;
 }
 
@@ -204,7 +198,11 @@ int ht_db_load_table(ht_t *ht, str *dbtable, int mode)
 	do {
 		for(i=0; i<RES_ROW_N(db_res); i++)
 		{
-			/* not NULL values enforced in table definition ?!?! */
+			if(RES_ROWS(db_res)[i].values[0].type!=DB1_STRING
+					|| VAL_NULL(&RES_ROWS(db_res)[i].values[0])) {
+				LM_ERR("key type must be string and its value not null\n");
+				goto error;
+			}
 			kname.s = (char*)(RES_ROWS(db_res)[i].values[0].val.string_val);
 			if(kname.s==NULL) {
 				LM_ERR("null key in row %d\n", i);

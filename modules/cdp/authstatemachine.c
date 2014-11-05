@@ -39,7 +39,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -243,10 +243,7 @@ inline int auth_client_statefull_sm_process(cdp_session_t* s, int event, AAAMess
                     //LM_INFO("state machine: i was in pending and i am going to open\n");
                     break;
                 case AUTH_EV_RECV_ANS_UNSUCCESS:
-                    x->state = AUTH_ST_DISCON;
-                    //LM_INFO("state machine: i was in pending and i am going to discon\n");
-                    Send_STR(s, msg);
-                    break;
+		    LM_DBG("In state AUTH_ST_PENDING and received AUTH_EV_RECV_ANS_UNSUCCESS - nothing to do but clean up session\n");
                 case AUTH_EV_SESSION_TIMEOUT:
                 case AUTH_EV_SERVICE_TERMINATED:
                 case AUTH_EV_SESSION_GRACE_TIMEOUT:

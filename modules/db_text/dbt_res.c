@@ -19,7 +19,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * --------
@@ -119,7 +119,9 @@ int dbt_result_free(dbt_result_p _dres)
 			for(i=0; i<_dres->nrcols; i++)
 			{
 				if((_dres->colv[i].type==DB1_STR 
-							|| _dres->colv[i].type==DB1_STRING)
+							|| _dres->colv[i].type==DB1_STRING
+							|| _dres->colv[i].type==DB1_BLOB
+							)
 						&& _rp0->fields[i].val.str_val.s)
 					pkg_free(_rp0->fields[i].val.str_val.s);
 			}
@@ -499,8 +501,10 @@ int dbt_cmp_val(dbt_val_p _vp, db_val_t* _v)
 		case DB1_BITMAP:
 			return (_vp->val.int_val<_v->val.bitmap_val)?-1:
 				(_vp->val.int_val>_v->val.bitmap_val)?1:0;
+		default:
+			LM_ERR("invalid datatype %d\n", VAL_TYPE(_v));
+			return -2;
 	}
-	LM_ERR("invalid datatype %d\n", VAL_TYPE(_v));
 	return -2;
 }
 

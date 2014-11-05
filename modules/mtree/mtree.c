@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -336,7 +336,7 @@ is_t* mt_get_tvalue(m_tree_t *pt, str *tomatch, int *len)
 
 int mt_add_tvalues(struct sip_msg *msg, m_tree_t *pt, str *tomatch)
 {
-	int l;
+        int l, n;
 	mt_node_t *itn;
 	int_str val, values_avp_name;
 	unsigned short values_name_type;
@@ -353,7 +353,9 @@ int mt_add_tvalues(struct sip_msg *msg, m_tree_t *pt, str *tomatch)
 		return -1;
 	}
 
-	l = 0;
+	destroy_avps(values_name_type, values_avp_name, 1);
+
+	l = n = 0;
 	itn = pt->head;
 
 	while (itn != NULL && l < tomatch->len && l < MT_MAX_DEPTH) {
@@ -377,6 +379,7 @@ int mt_add_tvalues(struct sip_msg *msg, m_tree_t *pt, str *tomatch)
 						val.s.s);
 				add_avp(values_name_type|AVP_VAL_STR, values_avp_name, val);
 			}
+			n++;
 			tvalues = tvalues->next;
 		}
 
@@ -384,7 +387,10 @@ int mt_add_tvalues(struct sip_msg *msg, m_tree_t *pt, str *tomatch)
 		l++;	
 	}
 
-	return 0;
+	if (n > 0)
+	        return 0;
+	else
+	        return -1;
 }
 
 int mt_match_prefix(struct sip_msg *msg, m_tree_t *it,

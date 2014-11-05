@@ -1,7 +1,5 @@
 /**
- * $Id$
- *
- * Copyright (C) 2008 Elena-Ramona Modroiu (asipto.com)
+ * Copyright (C) 2008-2014 Elena-Ramona Modroiu (asipto.com)
  *
  * This file is part of Kamailio, a free SIP server.
  *
@@ -17,7 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 #include <stdio.h>
@@ -33,6 +31,7 @@
 #include "../../route.h"
 #include "../../dprint.h"
 #include "../../hashes.h"
+#include "../../mod_fix.h"
 #include "../../ut.h"
 #include "../../rpc.h"
 #include "../../rpc_lookup.h"
@@ -66,6 +65,10 @@ static int ht_rm_name_re(struct sip_msg* msg, char* key, char* foo);
 static int ht_rm_value_re(struct sip_msg* msg, char* key, char* foo);
 static int ht_slot_lock(struct sip_msg* msg, char* key, char* foo);
 static int ht_slot_unlock(struct sip_msg* msg, char* key, char* foo);
+static int ht_reset(struct sip_msg* msg, char* htname, char* foo);
+static int w_ht_iterator_start(struct sip_msg* msg, char* iname, char* hname);
+static int w_ht_iterator_next(struct sip_msg* msg, char* iname, char* foo);
+static int w_ht_iterator_end(struct sip_msg* msg, char* iname, char* foo);
 
 int ht_param(modparam_t type, void* val);
 
@@ -87,6 +90,12 @@ static pv_export_t mod_pvs[] = {
 		pv_parse_ht_name, 0, 0, 0 },
 	{ {"shtdec", sizeof("shtdec")-1}, PVT_OTHER, pv_get_ht_dec, 0,
 		pv_parse_ht_name, 0, 0, 0 },
+	{ {"shtrecord", sizeof("shtrecord")-1}, PVT_OTHER, pv_get_ht_expired_cell, 0,
+		pv_parse_ht_expired_cell, 0, 0, 0 },
+	{ {"shtitkey", sizeof("shtitkey")-1}, PVT_OTHER, pv_get_iterator_key, 0,
+		pv_parse_iterator_name, 0, 0, 0 },
+	{ {"shtitval", sizeof("shtitval")-1}, PVT_OTHER, pv_get_iterator_val, 0,
+		pv_parse_iterator_name, 0, 0, 0 },
 	{ {0, 0}, 0, 0, 0, 0, 0, 0, 0 }
 };
 
@@ -109,20 +118,28 @@ static cmd_export_t cmds[]={
 		ANY_ROUTE},
 	{"sht_unlock",      (cmd_function)ht_slot_unlock,  1, fixup_ht_key, 0,
 		ANY_ROUTE},
+	{"sht_reset",		(cmd_function)ht_reset,		   1, fixup_spve_null, 0,
+		ANY_ROUTE},
+	{"sht_iterator_start",	(cmd_function)w_ht_iterator_start,	2, fixup_spve_spve, 0,
+		ANY_ROUTE},
+	{"sht_iterator_next",	(cmd_function)w_ht_iterator_next,	1, fixup_spve_null, 0,
+		ANY_ROUTE},
+	{"sht_iterator_end",	(cmd_function)w_ht_iterator_end,	1, fixup_spve_null, 0,
+		ANY_ROUTE},
 	{"bind_htable",     (cmd_function)bind_htable,     0, 0, 0,
 		ANY_ROUTE},
 	{0,0,0,0,0,0}
 };
 
 static param_export_t params[]={
-	{"htable",             STR_PARAM|USE_FUNC_PARAM, (void*)ht_param},
-	{"db_url",             STR_PARAM, &ht_db_url.s},
-	{"key_name_column",    STR_PARAM, &ht_db_name_column.s},
-	{"key_type_column",    STR_PARAM, &ht_db_ktype_column.s},
-	{"value_type_column",  STR_PARAM, &ht_db_vtype_column.s},
-	{"key_value_column",   STR_PARAM, &ht_db_value_column.s},
-	{"expires_column",     STR_PARAM, &ht_db_expires_column.s},
-	{"array_size_suffix",  STR_PARAM, &ht_array_size_suffix.s},
+	{"htable",             PARAM_STRING|USE_FUNC_PARAM, (void*)ht_param},
+	{"db_url",             PARAM_STR, &ht_db_url},
+	{"key_name_column",    PARAM_STR, &ht_db_name_column},
+	{"key_type_column",    PARAM_STR, &ht_db_ktype_column},
+	{"value_type_column",  PARAM_STR, &ht_db_vtype_column},
+	{"key_value_column",   PARAM_STR, &ht_db_value_column},
+	{"expires_column",     PARAM_STR, &ht_db_expires_column},
+	{"array_size_suffix",  PARAM_STR, &ht_array_size_suffix},
 	{"fetch_rows",         INT_PARAM, &ht_fetch_rows},
 	{"timer_interval",     INT_PARAM, &ht_timer_interval},
 	{"db_expires",         INT_PARAM, &ht_db_expires_flag},
@@ -196,6 +213,8 @@ static int mod_init(void)
 		LM_ERR("failed to initialize dmq integration\n");
 		return -1;
 	}
+
+	ht_iterator_init();
 
 	return 0;
 }
@@ -350,6 +369,76 @@ static int ht_rm_value_re(struct sip_msg* msg, char* key, char* foo)
 		}
 	}
 	if(ht_rm_cell_re(&sre, hpv->ht, 1)<0)
+		return -1;
+	return 1;
+}
+
+static int ht_reset(struct sip_msg* msg, char* htname, char* foo)
+{
+	ht_t *ht;
+	str sname;
+
+	if(fixup_get_svalue(msg, (gparam_t*)htname, &sname)<0 || sname.len<=0)
+	{
+		LM_ERR("cannot get hash table name\n");
+		return -1;
+	}
+	ht = ht_get_table(&sname);
+	if(ht==NULL)
+	{
+		LM_ERR("cannot get hash table [%.*s]\n", sname.len, sname.s);
+		return -1;
+	}
+	if(ht_reset_content(ht)<0)
+		return -1;
+	return 1;
+}
+
+static int w_ht_iterator_start(struct sip_msg* msg, char* iname, char* hname)
+{
+	str siname;
+	str shname;
+
+	if(fixup_get_svalue(msg, (gparam_t*)iname, &siname)<0 || siname.len<=0)
+	{
+		LM_ERR("cannot get iterator name\n");
+		return -1;
+	}
+	if(fixup_get_svalue(msg, (gparam_t*)hname, &shname)<0 || shname.len<=0)
+	{
+		LM_ERR("cannot get hash table name\n");
+		return -1;
+	}
+
+	if(ht_iterator_start(&siname, &shname)<0)
+		return -1;
+	return 1;
+}
+
+static int w_ht_iterator_next(struct sip_msg* msg, char* iname, char* foo)
+{
+	str siname;
+
+	if(fixup_get_svalue(msg, (gparam_t*)iname, &siname)<0 || siname.len<=0)
+	{
+		LM_ERR("cannot get iterator name\n");
+		return -1;
+	}
+	if(ht_iterator_next(&siname)<0)
+		return -1;
+	return 1;
+}
+
+static int w_ht_iterator_end(struct sip_msg* msg, char* iname, char* foo)
+{
+	str siname;
+
+	if(fixup_get_svalue(msg, (gparam_t*)iname, &siname)<0 || siname.len<=0)
+	{
+		LM_ERR("cannot get iterator name\n");
+		return -1;
+	}
+	if(ht_iterator_end(&siname)<0)
 		return -1;
 	return 1;
 }

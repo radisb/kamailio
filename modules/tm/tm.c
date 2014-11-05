@@ -44,7 +44,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 /*
  * History:
@@ -298,6 +298,7 @@ static int t_any_timeout(struct sip_msg* msg, char*, char*);
 static int t_any_replied(struct sip_msg* msg, char*, char*);
 static int w_t_is_canceled(struct sip_msg* msg, char*, char*);
 static int t_is_expired(struct sip_msg* msg, char*, char*);
+static int w_t_is_retr_async_reply(struct sip_msg* msg, char*, char*);
 static int t_grep_status(struct sip_msg* msg, char*, char*);
 static int w_t_drop_replies(struct sip_msg* msg, char* foo, char* bar);
 static int w_t_save_lumps(struct sip_msg* msg, char* foo, char* bar);
@@ -361,6 +362,8 @@ static cmd_export_t cmds[]={
 	{"t_relay_to_sctp",       w_t_relay_to_sctp_uri,    0, 0,
 			REQUEST_ROUTE|FAILURE_ROUTE},
 #endif
+	{"t_replicate",        w_t_replicate_uri,       0, 0,
+			REQUEST_ROUTE},
 	{"t_replicate",        w_t_replicate_uri,       1, fixup_var_str_1,
 			REQUEST_ROUTE},
 	{"t_replicate",        w_t_replicate,           2, fixup_hostport2proxy,
@@ -470,6 +473,8 @@ static cmd_export_t cmds[]={
 			REQUEST_ROUTE|TM_ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE },
 	{"t_is_canceled",     w_t_is_canceled,          0, 0,
 			REQUEST_ROUTE|TM_ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE },
+        {"t_is_retr_async_reply",     w_t_is_retr_async_reply,          0, 0,
+			TM_ONREPLY_ROUTE},                
 	{"t_is_expired",      t_is_expired,             0, 0,
 			REQUEST_ROUTE|TM_ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE },
 	{"t_grep_status",     t_grep_status,            1, fixup_var_int_1, 
@@ -796,9 +801,9 @@ static int mod_init(void)
 
 	/* checking if we have sufficient bitmap capacity for given
 	   maximum number of  branches */
-	if (MAX_BRANCHES+1>31) {
+	if (sr_dst_max_branches+1>31) {
 		LOG(L_CRIT, "Too many max UACs for UAC branch_bm_t bitmap: %d\n",
-			MAX_BRANCHES );
+			sr_dst_max_branches );
 		return -1;
 	}
 
@@ -1608,7 +1613,7 @@ int t_replicate_uri(struct sip_msg *msg, str *suri)
 	struct sip_uri turi;
 	int r = -1;
 
-	if (suri != NULL && suri->s != NULL)
+	if (suri != NULL && suri->s != NULL && suri->len > 0)
 	{
 		memset(&turi, 0, sizeof(struct sip_uri));
 		if(parse_uri(suri->s, suri->len, &turi)!=0)
@@ -1638,6 +1643,9 @@ inline static int w_t_replicate_uri(struct sip_msg  *msg ,
 				char *_foo       /* nothing expected */ )
 {
 	str suri;
+
+	if(uri==NULL)
+		return t_replicate_uri(msg, NULL);
 
 	if(fixup_get_svalue(msg, (gparam_p)uri, &suri)!=0)
 	{
@@ -1945,6 +1953,29 @@ static int w_t_is_canceled(struct sip_msg* msg, char* foo, char* bar)
 	return t_is_canceled(msg);
 }
 
+/* script function, returns: 1 if the transaction is currently suspended, -1 if not */
+int t_is_retr_async_reply(struct sip_msg* msg)
+{
+	struct cell *t;
+	int ret;	
+	
+	if (t_check( msg , 0 )==-1) return -1;
+	t=get_t();
+	if ((t==0) || (t==T_UNDEFINED)){
+		LOG(L_ERR, "ERROR: t_is_retr_async_reply: cannot check a message "
+			"for which no T-state has been established\n");
+		ret=-1;
+	}else{
+        LOG(L_DBG, "TRANSACTION FLAGS IS %d\n", t->flags);
+		ret=(t->flags & T_ASYNC_SUSPENDED)?1:-1;
+	}
+	return ret;
+}
+static int w_t_is_retr_async_reply(struct sip_msg* msg, char* foo, char* bar)
+{
+	return t_is_retr_async_reply(msg);
+}
+
 /* script function, returns: 1 if the transaction lifetime interval has already elapsed, -1 if not */
 int t_is_expired(struct sip_msg* msg, char* foo, char* bar)
 {
@@ -2109,6 +2140,13 @@ int t_check_trans(struct sip_msg* msg)
 	int branch;
 	int ret;
 	
+	/* already processing a T */
+	if(get_route_type()==FAILURE_ROUTE
+			|| get_route_type()==BRANCH_ROUTE
+			|| get_route_type()==TM_ONREPLY_ROUTE) {
+		return 1;
+	}
+
 	if (msg->first_line.type==SIP_REPLY) {
 		branch = 0;
 		ret = (t_check_msg( msg , &branch)==1) ? 1 : -1;
@@ -2140,7 +2178,7 @@ int t_check_trans(struct sip_msg* msg)
 				}
 				/* no need for UNREF(t); set_t(0) - the end-of-script
 				   t_unref callback will take care of them */
-				return 0; /* return from the script */
+				return 0; /* exit from the script */
 		}
 		/* not found or error */
 	}

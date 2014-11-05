@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * --------
@@ -144,11 +144,11 @@
 #define SRV_MAX_PREFIX_LEN SRV_TLS_PREFIX_LEN
 
 #ifndef PKG_MEM_SIZE
-#define PKG_MEM_SIZE 4
+#define PKG_MEM_SIZE 8
 #endif
 #define PKG_MEM_POOL_SIZE PKG_MEM_SIZE*1024*1024	/*!< used only if PKG_MALLOC is defined*/
 
-#define SHM_MEM_SIZE 32				/*!< used if SH_MEM is defined*/
+#define SHM_MEM_SIZE 64				/*!< used if SH_MEM is defined*/
 
 
 /* dimensioning buckets in q_malloc */
@@ -166,10 +166,11 @@
 #define BUF_SIZE 65535
 
 #define MAX_VIA_LINE_SIZE	240	/*!< forwarding  -- Via buffer dimensioning */
-#define MAX_RECEIVED_SIZE	57	/*!< forwarding  -- Via buffer dimensioning - Received header */
+#define MAX_RECEIVED_SIZE	59	/*!< forwarding  -- Via buffer dimensioning - Received header */
 #define MAX_RPORT_SIZE		13	/*!< forwarding  -- Via buffer dimensioning - Rport */
 
-#define MAX_BRANCHES    	12	/*!< maximum number of branches per transaction */
+#define MAX_BRANCHES_DEFAULT	12	/*!< default maximum number of branches per transaction */
+#define MAX_BRANCHES_LIMIT		32	/*!< limit of maximum number of branches per transaction */
 
 #define MAX_PRINT_TEXT 		256	/*!< max length of the text of fifo 'print' command */
 

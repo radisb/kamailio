@@ -22,7 +22,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * --------
@@ -147,6 +147,9 @@ int load_tm( struct tm_binds *tmb)
 #ifdef WITH_TM_CTX
 	tmb->tm_ctx_get = tm_ctx_get;
 #endif
+	tmb->t_append_branches = t_append_branches;
+	tmb->t_load_contacts = t_load_contacts;
+	tmb->t_next_contacts = t_next_contacts;
 	return 1;
 }
 
@@ -165,6 +168,7 @@ int load_xtm(tm_xapi_t *xapi)
 	xapi->t_on_reply      = t_on_reply;
 	xapi->t_check_trans   = t_check_trans;
 	xapi->t_is_canceled   = t_is_canceled;
+	xapi->t_on_branch_failure = t_on_branch_failure;
 
 	return 0;
 }

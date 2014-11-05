@@ -15,7 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * 2012-10-18  initial version (osas)
  */
@@ -570,7 +570,7 @@ int ph_getDbTableCols(ph_db_url_t *ph_db_urls, ph_db_table_t *db_tables,
 			db_tables->cols = cols;
 			cols = &db_tables->cols[db_tables->cols_size];
 			memset(cols, 0, sizeof(ph_table_col_t));
-			cols->type=-1;
+			cols->type=DB1_UNKNOWN;
 			/* Populate the field */
 			field.s =
 				ph_xmlNodeGetNodeContentByName(node->children,
@@ -683,7 +683,7 @@ int ph_getDbTableCols(ph_db_url_t *ph_db_urls, ph_db_table_t *db_tables,
 				if(strncmp("DB1_DATETIME",val,12)==0)
 					cols->type=DB1_DATETIME;
 			}
-			if(cols->type==-1){
+			if(cols->type==DB1_UNKNOWN){
 				LM_ERR("unexpected type [%s] for %s %s %s\n",
 					val, table_node->name, node->name,
 					XHTTP_PI_XML_TYPE_NODE);
@@ -889,7 +889,7 @@ int ph_getColVals(ph_mod_t *module, ph_cmd_t *cmd,
 			if(vals==NULL||ids==NULL) {LM_ERR("oom\n"); return -1;}
 			col_vals = vals; col_ids = ids;
 			vals = &col_vals[size]; ids = &col_ids[size];
-			memset(vals, 0, sizeof(str*)); memset(ids, 0, sizeof(str*));
+			memset(vals, 0, sizeof(str)); memset(ids, 0, sizeof(str));
 			/* Retrieve the node attribute */
 			attr.s = ph_xmlNodeGetAttrContentByName(node,
 							XHTTP_PI_XML_ID_ATTR);

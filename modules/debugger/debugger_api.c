@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -273,18 +273,18 @@ int dbg_msgid_filter(struct sip_msg *msg, unsigned int flags, void *bar)
 	}
 	msgid_base = _dbg_pid_list[indx].msgid_base;
 	lock_release(_dbg_pid_list[indx].lock);
-	msgid_new = msg->id - msgid_base;
-	LM_DBG("msg->id:%d msgid_base:%d -> %d\n", msg->id, msgid_base, msgid_new);
-	if(msgid_new>0)
+	if(msg->id > msgid_base)
 	{
+		msgid_new = msg->id - msgid_base;
+		LM_DBG("msg->id:%d msgid_base:%d -> %d\n",
+			msg->id, msgid_base, msgid_new);
 		msg->id = msgid_new;
-		return 1;
 	}
 	else
 	{
-		LM_WARN("msgid_new<=0??\n");
-		return -1;
+		LM_DBG("msg->id:%d already processed\n", msg->id);
 	}
+	return 1;
 }
 
 char* get_current_route_type_name()

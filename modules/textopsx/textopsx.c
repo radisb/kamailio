@@ -21,7 +21,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 #include <stdio.h>
@@ -228,8 +228,11 @@ static int msg_apply_changes_f(sip_msg_t *msg, char *str1, char *str2)
 	/* reparse the message */
 	LM_DBG("SIP message content updated - reparsing\n");
 	if (parse_msg(msg->buf, msg->len, msg)!=0){
-		LM_ERR("parsing new sip message failed\n");
-		return -1;
+		LM_ERR("parsing new sip message failed [[%.*s]]\n",
+				msg->len, msg->buf);
+		/* exit config execution - sip_msg_t structure is no longer
+		 * valid/safe for config */
+		return 0;
 	}
 
 	return 1;

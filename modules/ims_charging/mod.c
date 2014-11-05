@@ -20,13 +20,11 @@
 #include "dialog.h"
 #include "../ims_usrloc_scscf/usrloc.h"
 #include "../../lib/ims/ims_getters.h"
+#include "ro_db_handler.h"
 
 MODULE_VERSION
 
 /* parameters */
-char* ro_origin_host_s = "scscf.ims.smilecoms.com";
-char* ro_origin_realm_s = "ims.smilecoms.com";
-char* ro_destination_realm_s = "ims.smilecoms.com";
 char* ro_destination_host_s = "hss.ims.smilecoms.com";
 char* ro_service_context_id_root_s = "32260@3gpp.org";
 char* ro_service_context_id_ext_s = "ext";
@@ -36,7 +34,28 @@ char* ro_service_context_id_release_s = "8";
 static int ro_session_hash_size = 4096;
 int ro_timer_buffer = 5;
 int interim_request_credits = 30;
-client_ro_cfg cfg;
+
+int voice_service_identifier = 1000;
+int voice_rating_group = 100;
+
+int video_service_identifier = 1001;
+int video_rating_group = 200;
+
+
+/* DB params */
+static str db_url = str_init(DEFAULT_DB_URL);
+static unsigned int db_update_period = DB_DEFAULT_UPDATE_PERIOD;
+int ro_db_mode_param = DB_MODE_NONE;
+static int db_fetch_rows = 200;
+int ro_db_mode = DB_MODE_NONE;
+
+char *domain = "location";
+
+client_ro_cfg cfg = { str_init("scscf.ims.smilecoms.com"),
+    str_init("ims.smilecoms.com"),
+    str_init("ims.smilecoms.com"),
+    0
+};
 
 struct cdp_binds cdpb;
 struct dlg_binds dlgb;
@@ -72,10 +91,9 @@ static int mod_init(void);
 static int mod_child_init(int);
 static void mod_destroy(void);
 
-static int w_ro_ccr(struct sip_msg *msg, str* route_name, str* direction, str* charge_type, str* unit_type, int reservation_units, char *_d);
+static int w_ro_ccr(struct sip_msg *msg, char* route_name, char* direction, char* charge_type, char* unit_type, int reservation_units, char* trunk_id);
 //void ro_session_ontimeout(struct ro_tl *tl);
 
-static int domain_fixup(void** param);
 static int ro_fixup(void **param, int param_no);
 
 static cmd_export_t cmds[] = {
@@ -87,7 +105,7 @@ static param_export_t params[] = {
 		{ "hash_size", 				INT_PARAM,			&ro_session_hash_size 		},
 		{ "interim_update_credits",	INT_PARAM,			&interim_request_credits 	},
 		{ "timer_buffer", 			INT_PARAM,			&ro_timer_buffer 			},
-		{ "ro_forced_peer", 		STR_PARAM, 			&ro_forced_peer.s 			},
+		{ "ro_forced_peer", 		PARAM_STR, 			&ro_forced_peer 			},
 		{ "ro_auth_expiry",			INT_PARAM, 			&ro_auth_expiry 			},
 		{ "cdp_event_latency", 		INT_PARAM,			&cdp_event_latency 			}, /*flag: report slow processing of CDP
 																						callback events or not */
@@ -96,15 +114,22 @@ static param_export_t params[] = {
 		{ "cdp_event_latency_log", 	INT_PARAM, 			&cdp_event_latency_loglevel },/*log-level to use to report
 																						slow processing of CDP callback event*/
 		{ "single_ro_session_per_dialog", 	INT_PARAM, 			&single_ro_session_per_dialog },
-		{ "origin_host", 			STR_PARAM, 			&ro_origin_host_s 			},
-		{ "origin_realm", 			STR_PARAM,			&ro_origin_realm_s 			},
-		{ "destination_realm", 		STR_PARAM,			&ro_destination_realm_s 	},
-		{ "destination_host", 		STR_PARAM,			&ro_destination_host_s 		},
-		{ "service_context_id_root",STR_PARAM,			&ro_service_context_id_root_s 	},
-		{ "service_context_id_ext", STR_PARAM,			&ro_service_context_id_ext_s 	},
-		{ "service_context_id_mnc", STR_PARAM,			&ro_service_context_id_mnc_s 	},
-		{ "service_context_id_mcc", STR_PARAM,			&ro_service_context_id_mcc_s 	},
-		{ "service_context_id_release",	STR_PARAM, 		&ro_service_context_id_release_s},
+		{ "origin_host", 			PARAM_STR, 			&cfg.origin_host 			},
+		{ "origin_realm", 			PARAM_STR,			&cfg.origin_realm 			},
+		{ "destination_realm", 		PARAM_STR,			&cfg.destination_realm 	},
+		{ "destination_host", 		PARAM_STRING,			&ro_destination_host_s 		}, /* Unused parameter? */
+		{ "service_context_id_root",PARAM_STRING,			&ro_service_context_id_root_s 	},
+		{ "service_context_id_ext", PARAM_STRING,			&ro_service_context_id_ext_s 	},
+		{ "service_context_id_mnc", PARAM_STRING,			&ro_service_context_id_mnc_s 	},
+		{ "service_context_id_mcc", PARAM_STRING,			&ro_service_context_id_mcc_s 	},
+		{ "service_context_id_release",	PARAM_STRING,			&ro_service_context_id_release_s},
+		{ "voice_service_identifier", 	INT_PARAM, 			&voice_service_identifier },/*service id for voice*/
+		{ "voice_rating_group", 	INT_PARAM, 			&voice_rating_group },/*rating group for voice*/
+		{ "video_service_identifier", 	INT_PARAM, 			&video_service_identifier },/*service id for voice*/
+		{ "video_rating_group", 	INT_PARAM, 			&video_rating_group },/*rating group for voice*/
+		{ "db_mode",			INT_PARAM,			&ro_db_mode_param		},
+		{ "db_url",			PARAM_STRING,			&db_url 			},
+		{ "db_update_period",		INT_PARAM,			&db_update_period		},
 		{ 0, 0, 0 }
 };
 
@@ -141,15 +166,6 @@ struct module_exports exports = { MOD_NAME, DEFAULT_DLFLAGS, /* dlopen flags */
 };
 
 int fix_parameters() {
-	cfg.origin_host.s = ro_origin_host_s;
-	cfg.origin_host.len = strlen(ro_origin_host_s);
-
-	cfg.origin_realm.s = ro_origin_realm_s;
-	cfg.origin_realm.len = strlen(ro_origin_realm_s);
-
-	cfg.destination_realm.s = ro_destination_realm_s;
-	cfg.destination_realm.len = strlen(ro_destination_realm_s);
-
 	cfg.service_context_id = shm_malloc(sizeof(str));
 	if (!cfg.service_context_id) {
 		LM_ERR("fix_parameters:not enough shm memory\n");
@@ -274,6 +290,27 @@ static int mod_init(void) {
 		LM_ERR("failed to register core statistics\n");
 		return -1;
 	}*/
+	
+	/* if a database should be used to store the dialogs' information */
+	ro_db_mode = ro_db_mode_param;
+	if (ro_db_mode == DB_MODE_NONE) {
+	    db_url.s = 0;
+	    db_url.len = 0;
+	} else {
+	    if (ro_db_mode != DB_MODE_REALTIME && ro_db_mode != DB_MODE_SHUTDOWN) {
+		LM_ERR("unsupported db_mode %d\n", ro_db_mode);
+		return -1;
+	    }
+	    if (!db_url.s || db_url.len == 0) {
+		LM_ERR("db_url not configured for db_mode %d\n", ro_db_mode);
+		return -1;
+	    }
+	    if (init_ro_db(&db_url, ro_session_hash_size, db_update_period, db_fetch_rows) != 0) {
+		LM_ERR("failed to initialize the DB support\n");
+		return -1;
+	    }
+//	    run_load_callbacks();
+	}
 
 	return 0;
 
@@ -284,14 +321,32 @@ error:
 }
 
 static int mod_child_init(int rank) {
-	return 0;
+    ro_db_mode = ro_db_mode_param;
+
+    if (((ro_db_mode == DB_MODE_REALTIME) && (rank > 0 || rank == PROC_TIMER)) ||
+	    (ro_db_mode == DB_MODE_SHUTDOWN && (rank == PROC_MAIN))) {
+	if (ro_connect_db(&db_url)) {
+	    LM_ERR("failed to connect to database (rank=%d)\n", rank);
+	    return -1;
+	}
+    }
+
+    /* in DB_MODE_SHUTDOWN only PROC_MAIN will do a DB dump at the end, so
+     * for the rest of the processes will be the same as DB_MODE_NONE */
+    if (ro_db_mode == DB_MODE_SHUTDOWN && rank != PROC_MAIN)
+	ro_db_mode = DB_MODE_NONE;
+    /* in DB_MODE_REALTIME and DB_MODE_DELAYED the PROC_MAIN have no DB handle */
+    if ((ro_db_mode == DB_MODE_REALTIME) && rank == PROC_MAIN)
+	ro_db_mode = DB_MODE_NONE;
+    
+    return 0;
 }
 
 static void mod_destroy(void) {
 
 }
 
-static int w_ro_ccr(struct sip_msg *msg, str* route_name, str* direction, str* charge_type, str* unit_type, int reservation_units, char* _d) {
+static int w_ro_ccr(struct sip_msg *msg, char* c_route_name, char* c_direction, char* c_charge_type, char* c_unit_type, int reservation_units, char* c_trunk_id) {
 	/* PSEUDOCODE/NOTES
 	 * 1. What mode are we in - terminating or originating
 	 * 2. check request type - 	IEC - Immediate Event Charging
@@ -316,19 +371,43 @@ static int w_ro_ccr(struct sip_msg *msg, str* route_name, str* direction, str* c
 	unsigned int tindex = 0,
 				 tlabel = 0;
 	struct impu_data *impu_data;
-	udomain_t* domain_t = (udomain_t*) _d;
 	char *p;
 	struct dlg_cell* dlg;
 	unsigned int len;
 	struct ro_session *ro_session = 0;
 	int free_contact = 0;
 	
-	LM_DBG("Ro CCR initiated: direction:%.*s, charge_type:%.*s, unit_type:%.*s, reservation_units:%i, route_name:%.*s",
-			direction->len, direction->s,
-			charge_type->len, charge_type->s,
-			unit_type->len, unit_type->s,
+	str s_route_name, s_direction, s_charge_type, s_unit_type, s_trunk_id;
+	
+	if (get_str_fparam(&s_route_name, msg, (fparam_t*) c_route_name) < 0) {
+	    LM_ERR("failed to get s_route_name\n");
+	    return RO_RETURN_ERROR;
+	}
+	if (get_str_fparam(&s_direction, msg, (fparam_t*) c_direction) < 0) {
+	    LM_ERR("failed to get s_direction\n");
+	    return RO_RETURN_ERROR;
+	}
+	if (get_str_fparam(&s_charge_type, msg, (fparam_t*) c_charge_type) < 0) {
+	    LM_ERR("failed to get s_charge_type\n");
+	    return RO_RETURN_ERROR;
+	}
+	if (get_str_fparam(&s_unit_type, msg, (fparam_t*) c_unit_type) < 0) {
+	    LM_ERR("failed to get s_unit_type\n");
+	    return RO_RETURN_ERROR;
+	}
+	if (get_str_fparam(&s_trunk_id, msg, (fparam_t*) c_trunk_id) < 0) {
+	    LM_ERR("failed to get s_trunk_id\n");
+	    return RO_RETURN_ERROR;
+	}
+	
+	LM_DBG("Ro CCR initiated: direction:%.*s, charge_type:%.*s, unit_type:%.*s, reservation_units:%i, route_name:%.*s, trunk_id:%.*s\n",
+			s_direction.len, s_direction.s,
+			s_charge_type.len, s_charge_type.s,
+			s_unit_type.len, s_unit_type.s,
 			reservation_units,
-			route_name->len, route_name->s);
+			s_route_name.len, s_route_name.s,
+			s_trunk_id.len, s_trunk_id.s);
+	
 
 	if (msg->first_line.type != SIP_REQUEST) {
 	    LM_ERR("Ro_CCR() called from SIP reply.");
@@ -343,7 +422,7 @@ static int w_ro_ccr(struct sip_msg *msg, str* route_name, str* direction, str* c
 		return RO_RETURN_ERROR;
 	}
 	
-	dir = get_direction_as_int(direction);
+	dir = get_direction_as_int(&s_direction);
 	
 	if (dir == RO_ORIG_DIRECTION) {
 		//get caller IMPU from asserted identity
@@ -396,8 +475,6 @@ static int w_ro_ccr(struct sip_msg *msg, str* route_name, str* direction, str* c
 	memcpy(p, contact.s, contact.len);
 	p += contact.len;
 	
-	impu_data->d = domain_t;
-
 	if (p != (((char*) impu_data) + len)) {
 	    LM_ERR("buffer overflow creating impu data, trying to send CCR\n");
 	    shm_free(impu_data);
@@ -430,18 +507,18 @@ send_ccr:
 	    goto done;
 	}
 	
-	LM_DBG("Looking for route block [%.*s]\n", route_name->len, route_name->s);
+	LM_DBG("Looking for route block [%.*s]\n", s_route_name.len, s_route_name.s);
 
-	int ri = route_get(&main_rt, route_name->s);
+	int ri = route_get(&main_rt, s_route_name.s);
 	if (ri < 0) {
-		LM_ERR("unable to find route block [%.*s]\n", route_name->len, route_name->s);
+		LM_ERR("unable to find route block [%.*s]\n", s_route_name.len, s_route_name.s);
 		ret = RO_RETURN_ERROR;
 		goto done;
 	}
 	
 	cfg_action = main_rt.rlist[ri];
 	if (!cfg_action) {
-		LM_ERR("empty action lists in route block [%.*s]\n", route_name->len, route_name->s);
+		LM_ERR("empty action lists in route block [%.*s]\n", s_route_name.len, s_route_name.s);
 		ret = RO_RETURN_ERROR;
 		goto done;
 	}
@@ -469,7 +546,7 @@ send_ccr:
 		goto done;
 	}
 	
-	ret = Ro_Send_CCR(msg, dlg, dir, charge_type, unit_type, reservation_units, cfg_action, tindex, tlabel);
+	ret = Ro_Send_CCR(msg, dlg, dir, &s_charge_type, &s_unit_type, reservation_units, &s_trunk_id, cfg_action, tindex, tlabel);
 	
 	if(ret < 0){
 	    LM_ERR("Failed to send CCR\n");
@@ -481,24 +558,11 @@ done:
 	return ret;
 }
 
-///* fixups */
-static int domain_fixup(void** param)
-{
-	udomain_t* d;
-
-	if (ul.register_udomain((char*)*param, &d) < 0) {
-		LM_ERR("failed to register domain\n");
-		return E_UNSPEC;
-	}
-	*param = (void*)d;
-	return 0;
-}
-
 static int ro_fixup(void **param, int param_no) {
 	str s;
 	unsigned int num;
 
-	if (param_no > 0 && param_no <= 4) {
+	if ( (param_no > 0 && param_no <= 4) || (param_no == 6) ) {
 		return fixup_var_str_12(param, param_no);
 	} else if (param_no == 5) {
 		/*convert to int */
@@ -511,9 +575,6 @@ static int ro_fixup(void **param, int param_no) {
 		}
 		LM_ERR("Bad reservation units: <%s>n", (char*)(*param));
 		return E_CFG;
-	} 
-	else if (param_no == 6) {
-		return domain_fixup(param);
 	}
 	
 	return 0;

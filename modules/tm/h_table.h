@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * --------
@@ -322,6 +322,7 @@ typedef struct async_state {
 
 #define T_DISABLE_INTERNAL_REPLY (1<<13) /* don't send internal negative reply */
 #define T_ADMIN_REPLY (1<<14) /* t reply sent by admin (e.g., from cfg script) */
+#define T_ASYNC_SUSPENDED (1<<15)
 
 /* unsigned short should be enough for a retr. timer: max. 65535 ms =>
  * max retr. = 65 s which should be enough and saves us 2*2 bytes */
@@ -426,7 +427,7 @@ typedef struct cell
 	/* UA Server */
 	struct ua_server  uas;
 	/* UA Clients */
-	struct ua_client  uac[ MAX_BRANCHES ];
+	struct ua_client  *uac;
 	
 	/* store transaction state to be used for async transactions */
 	struct async_state async_backup;
@@ -460,7 +461,7 @@ typedef struct cell
 #endif
 	ticks_t end_of_life; /* maximum lifetime */
 
-	/* nr of replied branch; 0..MAX_BRANCHES=branch value,
+	/* nr of replied branch; 0..sr_dst_max_branches=branch value,
 	 * -1 no reply, -2 local reply */
 	short relayed_reply_branch;
 
@@ -472,6 +473,8 @@ typedef struct cell
 	unsigned short on_reply;
 	 /* The route to take for each downstream branch separately */
 	unsigned short on_branch;
+	 /* branch route backup for late branch add (t_append_branch) */
+	unsigned short on_branch_delayed;
 
 	/* place holder for MD5checksum, MD5_LEN bytes are extra alloc'ed */
 	char md5[0];

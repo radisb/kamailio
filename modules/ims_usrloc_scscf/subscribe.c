@@ -39,7 +39,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  * 
  */
 
@@ -55,10 +55,13 @@
 #include "../../hashes.h"
 
 #include "ul_mod.h"
+#include "usrloc_db.h"
 
 
 extern int sub_dialog_hash_size;
 extern shtable_t sub_dialog_table;
+
+extern int db_mode;
 
 int get_subscriber(impurecord_t* urec, str *presentity_uri, str *watcher_contact, int event, reg_subscriber** r_subscriber) {
     
@@ -95,7 +98,7 @@ int get_subscriber(impurecord_t* urec, str *presentity_uri, str *watcher_contact
     return 1;
 }
 
-reg_subscriber* new_subscriber(str* presentity_uri, str* watcher_uri, str* watcher_contact, subscriber_data_t* subscriber_data) {
+reg_subscriber* new_subscriber(subscriber_data_t* subscriber_data) {
     subs_t subs;
     reg_subscriber *s;
 
@@ -107,7 +110,7 @@ reg_subscriber* new_subscriber(str* presentity_uri, str* watcher_uri, str* watch
     
     len = sizeof (reg_subscriber) + subscriber_data->callid->len
             + subscriber_data->ftag->len + subscriber_data->ttag->len
-            + watcher_contact->len + watcher_uri->len + presentity_uri->len
+            + subscriber_data->watcher_contact->len + subscriber_data->watcher_uri->len + subscriber_data->presentity_uri->len
             + subscriber_data->record_route->len + subscriber_data->sockinfo_str->len;
 
     LM_DBG("Creating new subscription to reg");
@@ -124,6 +127,8 @@ reg_subscriber* new_subscriber(str* presentity_uri, str* watcher_uri, str* watch
     s->event = subscriber_data->event;
 
     s->expires = subscriber_data->expires;
+    
+    s->version = subscriber_data->version;
 
     p = (char*) (s + 1);
 
@@ -143,14 +148,14 @@ reg_subscriber* new_subscriber(str* presentity_uri, str* watcher_uri, str* watch
     p += subscriber_data->ftag->len;
 
     s->watcher_uri.s = p;
-    s->watcher_uri.len = watcher_uri->len;
-    memcpy(p, watcher_uri->s, watcher_uri->len);
-    p += watcher_uri->len;
+    s->watcher_uri.len = subscriber_data->watcher_uri->len;
+    memcpy(p, subscriber_data->watcher_uri->s, subscriber_data->watcher_uri->len);
+    p += subscriber_data->watcher_uri->len;
 
     s->watcher_contact.s = p;
-    s->watcher_contact.len = watcher_contact->len;
-    memcpy(p, watcher_contact->s, watcher_contact->len);
-    p += watcher_contact->len;
+    s->watcher_contact.len = subscriber_data->watcher_contact->len;
+    memcpy(p, subscriber_data->watcher_contact->s, subscriber_data->watcher_contact->len);
+    p += subscriber_data->watcher_contact->len;
 
     s->record_route.s = p;
     s->record_route.len = subscriber_data->record_route->len;
@@ -163,9 +168,9 @@ reg_subscriber* new_subscriber(str* presentity_uri, str* watcher_uri, str* watch
     p += subscriber_data->sockinfo_str->len;
 
     s->presentity_uri.s = p;
-    s->presentity_uri.len = presentity_uri->len;
-    memcpy(p, presentity_uri->s, presentity_uri->len);
-    p += presentity_uri->len;
+    s->presentity_uri.len = subscriber_data->presentity_uri->len;
+    memcpy(p, subscriber_data->presentity_uri->s, subscriber_data->presentity_uri->len);
+    p += subscriber_data->presentity_uri->len;
 
     if (p != (((char*) s) + len)) {
         LM_CRIT("buffer overflow\n");
@@ -214,7 +219,7 @@ str get_presentity_from_subscriber_dialog(str *callid, str *to_tag, str *from_ta
 	    LM_DBG("Subscriber dialog record not found in hash table\n");
 	    lock_release(&sub_dialog_table[hash_code].lock);
 	    return pres_uri;
-    }
+}
 
     //make copy of pres_uri
     pres_uri.s = (char*) shm_malloc(s->pres_uri.len);
@@ -231,19 +236,22 @@ str get_presentity_from_subscriber_dialog(str *callid, str *to_tag, str *from_ta
     return pres_uri;
 }
 
+/*db_load:  if this is a db_load then we don't write to db - as it will be an unecessary rewrite*/
 int add_subscriber(impurecord_t* urec,
-        str *watcher_uri, str *watcher_contact,
-        subscriber_data_t* subscriber_data, reg_subscriber** _reg_subscriber) {
+        subscriber_data_t* subscriber_data, reg_subscriber** _reg_subscriber, int db_load) {
 
+    reg_subscriber *s;
     LM_DBG("Adding reg subscription to IMPU record");
 
     if (!urec) {
         LM_ERR("no presentity impu record provided\n");
         return 0;
     }
-    reg_subscriber *s = new_subscriber(&urec->public_identity, watcher_uri, watcher_contact, subscriber_data);
+    
+    s = new_subscriber(subscriber_data);
+    
 
-    if (!s) return 1;
+    if (!s) return -1;
 
     LM_DBG("Adding new subscription to IMPU record list");
     s->next = 0;
@@ -253,23 +261,52 @@ int add_subscriber(impurecord_t* urec,
     if (!urec->shead) urec->shead = s;
 
     *_reg_subscriber = s;
+    
+    /*DB?*/
+    if(!db_load && db_mode == WRITE_THROUGH) {
+	if(db_insert_subscriber(urec, s) != 0) {
+	    LM_ERR("Failed to insert subscriber into DB subscriber [%.*s] to IMPU [%.*s]...continuing but db will be out of sync!\n", 
+		    s->presentity_uri.len, s->presentity_uri.s, urec->public_identity.len, urec->public_identity.s);
+	    goto done;
+	}
+	
+	if(db_link_subscriber_to_impu(urec, s) !=0) {
+	    LM_ERR("Failed to update DB linking subscriber [%.*s] to IMPU [%.*s]...continuing but db will be out of sync!\n", 
+		    s->presentity_uri.len, s->presentity_uri.s, urec->public_identity.len, urec->public_identity.s);
+	}
+    }
+    
+done:
     return 0;
 }
 
 
-int update_subscriber(impurecord_t* urec,
-        str *watcher_uri, str *watcher_contact,
-        int *expires, reg_subscriber** _reg_subscriber) {
-
+int update_subscriber(impurecord_t* urec, reg_subscriber** _reg_subscriber, int *expires, int *local_cseq, int *version) {
 
     reg_subscriber *rs = *_reg_subscriber;
     if (expires) {
         rs->expires = *expires;
-        return 1;
     } else {
-        LM_ERR("Failed to update subscriber as expires is expires is null");
-        return 0;
+        LM_DBG("No expires so will not update subscriber expires.\n");
     }
+    if (local_cseq) {
+        rs->local_cseq = *local_cseq;
+    } else {
+        LM_DBG("No local cseq so will not update subscriber local cseq.\n");
+    }
+    if (version) {
+        rs->version = *version;
+    } else {
+        LM_DBG("No version so will not update subscriber version.\n");
+    }
+    
+    /*DB?*/
+    if (db_mode == WRITE_THROUGH && db_insert_subscriber(urec, rs) != 0) {
+	    LM_ERR("Failed to insert subscriber into DB subscriber [%.*s] to IMPU [%.*s]...continuing but db will be out of sync!\n", 
+		    rs->presentity_uri.len, rs->presentity_uri.s, urec->public_identity.len, urec->public_identity.s);
+    }
+
+    return 1;
 }
 
 
@@ -286,12 +323,7 @@ void external_delete_subscriber(reg_subscriber *s, udomain_t* _t, int lock_domai
         return;
     }
 
-    if (urec->shead == s) urec->shead = s->next;
-    else s->prev->next = s->next;
-    if (urec->stail == s) urec->stail = s->prev;
-    else s->next->prev = s->prev;
-    LM_DBG("About to free subscriber memory");
-    free_subscriber(s);
+    delete_subscriber(urec, s);
 
     if(lock_domain) unlock_udomain(_t, &s->presentity_uri);
 
@@ -299,6 +331,16 @@ void external_delete_subscriber(reg_subscriber *s, udomain_t* _t, int lock_domai
 
 void delete_subscriber(impurecord_t* urec, reg_subscriber *s) {
     LM_DBG("Deleting subscriber");
+    
+    if (db_mode == WRITE_THROUGH && db_unlink_subscriber_from_impu(urec, s) !=0) {
+	    LM_ERR("Failed to delete DB linking subscriber [%.*s] to IMPU [%.*s]...continuing but db will be out of sync!\n", 
+		    s->presentity_uri.len, s->presentity_uri.s, urec->public_identity.len, urec->public_identity.s);
+	    
+    }    
+    if (db_mode == WRITE_THROUGH && db_delete_subscriber(urec, s) != 0) {
+	    LM_ERR("error removing subscriber from DB [%.*s]... will still remove from memory\n", s->presentity_uri.len, s->presentity_uri.s);
+    }
+    
     if (urec->shead == s) urec->shead = s->next;
     else s->prev->next = s->next;
     if (urec->stail == s) urec->stail = s->prev;
@@ -337,6 +379,6 @@ void free_subscriber(reg_subscriber *s) {
 
 }
 
-int valid_subscriber(reg_subscriber *s) {
-    return (s->expires > act_time);
+int valid_subscriber(reg_subscriber *s, time_t time) {
+    return (s->expires > time);
 }
