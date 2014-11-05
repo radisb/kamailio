@@ -39,7 +39,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  * 
  */
 
@@ -66,6 +66,7 @@
 #include "reg_mod.h"
 #include "save.h"
 #include "service_routes.h"
+#include "lookup.h"
 
 MODULE_VERSION
 
@@ -77,13 +78,21 @@ pua_api_t pua; 							/**!< PUA API structure */
 int publish_reginfo = 0;
 int subscribe_to_reginfo = 0;
 int subscription_expires = 3600;
+int ignore_reg_state = 0;
+int ignore_contact_rxport_check = 0;                             /**!< ignore port checks between received port on message and 
+registration received port. 
+                                                                 * this is useful for example if you register with UDP but possibly send invite over TCP (message too big)*/
 
 time_t time_now;
-char * pcscf_uri = "sip:pcscf.ims.smilecoms.com:4060";
-str pcscf_uri_str;
+
+str pcscf_uri = str_init("sip:pcscf.ims.smilecoms.com:4060");
+str force_icscf_uri = str_init("");
+
 unsigned int pending_reg_expires = 30;			/**!< parameter for expiry time of a pending registration before receiving confirmation from SCSCF */
 
 int is_registered_fallback2ip = 0;
+
+
 
 char* rcv_avp_param = 0;
 unsigned short rcv_avp_type = 0;
@@ -106,6 +115,8 @@ static int w_reginfo_handle_notify(struct sip_msg* _m, char* _d, char* _foo);
 static int w_assert_identity(struct sip_msg* _m, char* _d, char* _preferred_uri);
 static int w_assert_called_identity(struct sip_msg* _m, char* _d, char* _foo);
 
+static int w_lookup_transport(struct sip_msg* _m, char* _d, char* _uri);
+
 /*! \brief Fixup functions */
 static int domain_fixup(void** param, int param_no);
 static int save_fixup2(void** param, int param_no);
@@ -126,18 +137,15 @@ inline void pcscf_act_time()
  * Exported functions
  */
 static cmd_export_t cmds[] = {
-	{"pcscf_save",     		(cmd_function)w_save,       	1,  	save_fixup2, 	0,		ONREPLY_ROUTE },
-	{"pcscf_save_pending",	(cmd_function)w_save_pending,       	1,  	save_fixup2, 	0,		REQUEST_ROUTE },
-
-	{"pcscf_follows_service_routes", (cmd_function)w_follows_service_routes,       	1,  	save_fixup2, 	0,		REQUEST_ROUTE },
-	{"pcscf_force_service_routes", (cmd_function)w_force_service_routes,       	1,  	save_fixup2, 	0,		REQUEST_ROUTE },
-
-	{"pcscf_is_registered", (cmd_function)w_is_registered,       	1,  	save_fixup2, 	0,		REQUEST_ROUTE|ONREPLY_ROUTE },
-
-	{"pcscf_assert_identity", (cmd_function)w_assert_identity,      2,  	assert_identity_fixup, 	0,		REQUEST_ROUTE },
-	{"pcscf_assert_called_identity", (cmd_function)w_assert_called_identity,      1,  	assert_identity_fixup, 	0,		ONREPLY_ROUTE },
-
-	{"reginfo_handle_notify", (cmd_function)w_reginfo_handle_notify, 1, domain_fixup, 0, REQUEST_ROUTE},
+	{"pcscf_save",     		(cmd_function)w_save,                   1,  	save_fixup2,            0,		ONREPLY_ROUTE },
+	{"pcscf_save_pending",          (cmd_function)w_save_pending,       	1,  	save_fixup2,            0,		REQUEST_ROUTE },
+	{"pcscf_follows_service_routes",(cmd_function)w_follows_service_routes, 1,  	save_fixup2,            0,		REQUEST_ROUTE },
+	{"pcscf_force_service_routes",  (cmd_function)w_force_service_routes,   1,  	save_fixup2,            0,		REQUEST_ROUTE },
+	{"pcscf_is_registered",         (cmd_function)w_is_registered,          1,  	save_fixup2,            0,		REQUEST_ROUTE|ONREPLY_ROUTE },
+	{"pcscf_assert_identity",       (cmd_function)w_assert_identity,        2,  	assert_identity_fixup,  0,		REQUEST_ROUTE },
+	{"pcscf_assert_called_identity",(cmd_function)w_assert_called_identity, 1,  assert_identity_fixup,  0,		ONREPLY_ROUTE },
+	{"reginfo_handle_notify",       (cmd_function)w_reginfo_handle_notify,  1,      domain_fixup,           0,              REQUEST_ROUTE},
+        {"lookup_transport",		(cmd_function)w_lookup_transport,                 1,      domain_fixup,           0,              REQUEST_ROUTE|FAILURE_ROUTE},
 	
 	{0, 0, 0, 0, 0, 0}
 };
@@ -147,18 +155,16 @@ static cmd_export_t cmds[] = {
  * Exported parameters
  */
 static param_export_t params[] = {
-	{"pcscf_uri",         	STR_PARAM, &pcscf_uri    						},
-	{"pending_reg_expires",	INT_PARAM, &pending_reg_expires					},
-
-	{"received_avp",       STR_PARAM, &rcv_avp_param       					},
-
-	{"is_registered_fallback2ip",	INT_PARAM, &is_registered_fallback2ip	},
-	
-	{"publish_reginfo", INT_PARAM, &publish_reginfo},
-        {"subscribe_to_reginfo", INT_PARAM, &subscribe_to_reginfo},
-        {"subscription_expires",INT_PARAM, &subscription_expires        },
-
-
+	{"pcscf_uri",                   PARAM_STR, &pcscf_uri                           },
+	{"pending_reg_expires",         INT_PARAM, &pending_reg_expires			},
+	{"received_avp",                PARAM_STR, &rcv_avp_param       		},
+	{"is_registered_fallback2ip",	INT_PARAM, &is_registered_fallback2ip           },
+	{"publish_reginfo",             INT_PARAM, &publish_reginfo                     },
+        {"subscribe_to_reginfo",        INT_PARAM, &subscribe_to_reginfo                },
+        {"subscription_expires",        INT_PARAM, &subscription_expires                },
+        {"ignore_contact_rxport_check", INT_PARAM, &ignore_contact_rxport_check         },
+        {"ignore_reg_state",		INT_PARAM, &ignore_reg_state			},
+	{"force_icscf_uri",		PARAM_STR, &force_icscf_uri			},
 //	{"store_profile_dereg",	INT_PARAM, &store_data_on_dereg},
 	{0, 0, 0}
 };
@@ -197,9 +203,6 @@ struct module_exports exports = {
 int fix_parameters() {
 	str s;
 	pv_spec_t avp_spec;
-
-	pcscf_uri_str.s = pcscf_uri;
-	pcscf_uri_str.len = strlen(pcscf_uri);
 
 	if (rcv_avp_param && *rcv_avp_param) {
 		s.s = rcv_avp_param; s.len = strlen(s.s);
@@ -373,6 +376,21 @@ static int assert_identity_fixup(void ** param, int param_no) {
 static int w_save(struct sip_msg* _m, char* _d, char* _cflags)
 {
 	return save(_m, (udomain_t*)_d, ((int)(unsigned long)_cflags));
+}
+
+/*! \brief
+ * Wrapper to lookup_transport(location)
+ */
+static int w_lookup_transport(struct sip_msg* _m, char* _d, char* _uri)
+{
+	str uri = {0};
+	if(_uri!=NULL && (fixup_get_svalue(_m, (gparam_p)_uri, &uri)!=0 || uri.len<=0))
+	{
+		LM_ERR("invalid uri parameter\n");
+		return -1;
+	}
+
+	return lookup_transport(_m, (udomain_t*)_d, (uri.len>0)?&uri:NULL);
 }
 
 static int w_save_pending(struct sip_msg* _m, char* _d, char* _cflags)

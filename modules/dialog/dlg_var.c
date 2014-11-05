@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 		       
 #include "../../route.h"
@@ -45,10 +45,22 @@ int dlg_cfg_cb(sip_msg_t *msg, unsigned int flags, void *cbp)
 	if(flags&POST_SCRIPT_CB) {
 		dlg = dlg_get_ctx_dialog();
 		if(dlg!=NULL) {
-			if(_dlg_ctx.t==0 && dlg->state==DLG_STATE_UNCONFIRMED) {
-				LM_DBG("new dialog with no trasaction after config execution\n");
-				dlg_release(dlg);
+			if(_dlg_ctx.t==0 && (dlg->state==DLG_STATE_UNCONFIRMED
+						|| _dlg_ctx.expect_t==1)) {
+				if(_dlg_ctx.cpid!=0 && _dlg_ctx.cpid==my_pid()) {
+					/* release to destroy dialog if created by this process
+					 * and request was not forwarded */
+					if(dlg->state==DLG_STATE_UNCONFIRMED) {
+						LM_DBG("new dialog with no trasaction after config"
+									" execution\n");
+					} else {
+						LM_DBG("dialog with no expected trasaction after"
+								" config execution\n");
+					}
+					dlg_release(dlg);
+				}
 			}
+			/* get ctx dlg increased ref count - release now */
 			dlg_release(dlg);
 		}
 	}
@@ -71,13 +83,14 @@ static inline struct dlg_var *new_dlg_var(str *key, str *val)
 	var->vflags = DLG_FLAG_NEW;
 	/* set key */
 	var->key.len = key->len;
-	var->key.s = (char*)shm_malloc(var->key.len);
+	var->key.s = (char*)shm_malloc(var->key.len+1);
 	if (var->key.s==NULL) {
 		shm_free(var);			
 		LM_ERR("no more shm mem\n");
 		return NULL;
 	}
 	memcpy(var->key.s, key->s, key->len);
+	var->key.s[var->key.len] = '\0';
 	/* set value */
 	var->value.len = val->len;
 	var->value.s = (char*)shm_malloc(var->value.len);

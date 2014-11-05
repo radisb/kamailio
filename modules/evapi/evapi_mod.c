@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -73,7 +73,7 @@ static cmd_export_t cmds[]={
 
 static param_export_t params[]={
 	{"workers",           INT_PARAM,   &_evapi_workers},
-	{"bind_addr",         STR_PARAM,   &_evapi_bind_param},
+	{"bind_addr",         PARAM_STRING,   &_evapi_bind_param},
 	{"netstring_format",  INT_PARAM,   &_evapi_netstring_format_param},
 	{0, 0, 0}
 };

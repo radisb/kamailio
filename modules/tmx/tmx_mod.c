@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 #include <stdio.h>
@@ -28,12 +28,14 @@
 #include "../../dprint.h"
 #include "../../mod_fix.h"
 #include "../../route.h"
+#include "../../script_cb.h"
 #include "../../modules/tm/tm_load.h"
 #include "../../lib/kcore/kstats_wrapper.h"
 #include "../../dset.h"
 
 #include "t_var.h"
 #include "t_mi.h"
+#include "tmx_pretran.h"
 #include "api.h"
 
 MODULE_VERSION
@@ -46,12 +48,15 @@ struct tm_binds _tmx_tmb;
 
 /** module functions */
 static int mod_init(void);
+static int child_init(int rank);
 static void destroy(void);
 
 static int t_cancel_branches(struct sip_msg* msg, char *k, char *s2);
 static int fixup_cancel_branches(void** param, int param_no);
-static int t_cancel_callid(struct sip_msg* msg, char *cid, char *cseq,
+static int w_t_cancel_callid_3(struct sip_msg* msg, char *cid, char *cseq,
 				char *flag);
+static int w_t_cancel_callid_4(struct sip_msg* msg, char *cid, char *cseq,
+				char *flag, char *creason);
 static int fixup_cancel_callid(void** param, int param_no);
 static int t_reply_callid(struct sip_msg* msg, char *cid, char *cseq,
 				char *rc, char *rs);
@@ -66,8 +71,13 @@ static int w_t_suspend(struct sip_msg* msg, char*, char*);
 static int w_t_continue(struct sip_msg* msg, char *idx, char *lbl, char *rtn);
 static int w_t_reuse_branch(struct sip_msg* msg, char*, char*);
 static int fixup_t_continue(void** param, int param_no);
+static int w_t_precheck_trans(sip_msg_t*, char*, char*);
+
+static int tmx_cfg_callback(sip_msg_t *msg, unsigned int flags, void *cbp);
 
 static int bind_tmx(tmx_api_t* api);
+
+static int _tmx_precheck_trans = 1;
 
 /* statistic variables */
 stat_var *tm_rcv_rpls;
@@ -159,7 +169,9 @@ static mi_export_t mi_cmds [] = {
 static cmd_export_t cmds[]={
 	{"t_cancel_branches", (cmd_function)t_cancel_branches,  1,
 		fixup_cancel_branches, 0, ONREPLY_ROUTE },
-	{"t_cancel_callid", (cmd_function)t_cancel_callid,  3,
+	{"t_cancel_callid", (cmd_function)w_t_cancel_callid_3,  3,
+		fixup_cancel_callid, 0, ANY_ROUTE },
+	{"t_cancel_callid", (cmd_function)w_t_cancel_callid_4,  4,
 		fixup_cancel_callid, 0, ANY_ROUTE },
 	{"t_reply_callid", (cmd_function)t_reply_callid,    4,
 		fixup_reply_callid, 0, ANY_ROUTE },
@@ -176,13 +188,16 @@ static cmd_export_t cmds[]={
 	{"t_continue", (cmd_function)w_t_continue,     3,
 		fixup_t_continue, 0, ANY_ROUTE },
 	{"t_reuse_branch", (cmd_function)w_t_reuse_branch, 0, 0, 0,
-	 EVENT_ROUTE },
+		EVENT_ROUTE },
+	{"t_precheck_trans", (cmd_function)w_t_precheck_trans, 0, 0, 0,
+		REQUEST_ROUTE },
 	{"bind_tmx", (cmd_function)bind_tmx, 1,
 		0, 0, ANY_ROUTE },
 	{0,0,0,0,0,0}
 };
 
 static param_export_t params[]={
+	{"precheck_trans", PARAM_INT, &_tmx_precheck_trans},
 	{0,0,0}
 };
 
@@ -204,7 +219,7 @@ struct module_exports exports= {
 	mod_init,   /* module initialization function */
 	0,
 	(destroy_function) destroy,
-	0           /* per-child init function */
+	child_init  /* per-child init function */
 };
 
 /**
@@ -232,6 +247,25 @@ static int mod_init(void)
 #endif
 	pv_tmx_data_init();
 
+	if (register_script_cb(tmx_cfg_callback,
+				POST_SCRIPT_CB|REQUEST_CB,0)<0) {
+		LM_ERR("cannot register post-script callback\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+/**
+ * child init function
+ */
+static int child_init(int rank)
+{
+	LM_DBG("rank is (%d)\n", rank);
+	if (rank==PROC_INIT) {
+		if(_tmx_precheck_trans!=0)
+			return tmx_init_pretran_table();
+	}
 	return 0;
 }
 
@@ -333,7 +367,7 @@ static int fixup_cancel_callid(void** param, int param_no)
 /**
  *
  */
-static int t_cancel_callid(struct sip_msg* msg, char *cid, char *cseq, char *flag)
+static int t_cancel_callid(struct sip_msg* msg, char *cid, char *cseq, char *flag, char *creason)
 {
 	struct cell *trans;
 	struct cell *bkt;
@@ -342,7 +376,9 @@ static int t_cancel_callid(struct sip_msg* msg, char *cid, char *cseq, char *fla
 	str cseq_s;
 	str callid_s;
 	int fl;
+	int rcode;
 
+	rcode = 0;
 	fl = -1;
 
 	if(fixup_get_svalue(msg, (gparam_p)cid, &callid_s)<0)
@@ -362,6 +398,14 @@ static int t_cancel_callid(struct sip_msg* msg, char *cid, char *cseq, char *fla
 		LM_ERR("cannot get flag\n");
 		return -1;
 	}
+	if(creason!=NULL && fixup_get_ivalue(msg, (gparam_p)creason, &rcode)<0)
+	{
+		LM_ERR("cannot get flag\n");
+		return -1;
+	}
+	if(rcode<100 || rcode>699)
+		rcode = 0;
+
 
 	bkt = _tmx_tmb.t_gett();
 	bkb = _tmx_tmb.t_gett_branch();
@@ -374,6 +418,7 @@ static int t_cancel_callid(struct sip_msg* msg, char *cid, char *cseq, char *fla
 	if(trans->uas.request && fl>0 && fl<32)
 		setflag(trans->uas.request, fl);
 	init_cancel_info(&cancel_data);
+	cancel_data.reason.cause = rcode;
 	cancel_data.cancel_bitmap = 0;
 	_tmx_tmb.prepare_to_cancel(trans, &cancel_data.cancel_bitmap, 0);
 	_tmx_tmb.cancel_uacs(trans, &cancel_data, 0);
@@ -387,12 +432,28 @@ static int t_cancel_callid(struct sip_msg* msg, char *cid, char *cseq, char *fla
 /**
  *
  */
+static int w_t_cancel_callid_3(struct sip_msg* msg, char *cid, char *cseq, char *flag)
+{
+	return t_cancel_callid(msg, cid, cseq, flag, NULL);
+}
+
+/**
+ *
+ */
+static int w_t_cancel_callid_4(struct sip_msg* msg, char *cid, char *cseq, char *flag, char *creason)
+{
+	return t_cancel_callid(msg, cid, cseq, flag, creason);
+}
+
+/**
+ *
+ */
 static int fixup_reply_callid(void** param, int param_no)
 {
 	if (param_no==1 || param_no==2 || param_no==4) {
 		return fixup_spve_null(param, 1);
 	}
-	if (param_no==3) {
+	if (param_no==3 || param_no==4) {
 		return fixup_igp_null(param, 1);
 	}
 	return 0;
@@ -636,6 +697,31 @@ static int fixup_t_continue(void** param, int param_no)
 	}
 
 	return 0;
+}
+
+/**
+ *
+ */
+static int w_t_precheck_trans(sip_msg_t *msg, char *p1, char *p2)
+{
+	int ret;
+
+	ret = tmx_check_pretran(msg);
+	if(ret>0)
+		return 1;
+	return (ret-1);
+}
+
+/**
+ *
+ */
+static int tmx_cfg_callback(sip_msg_t *msg, unsigned int flags, void *cbp)
+{
+	if(flags&POST_SCRIPT_CB) {
+		tmx_pretran_unlink();
+	}
+
+	return 1;
 }
 
 static int bind_tmx(tmx_api_t* api)

@@ -39,7 +39,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  * 
  */
 
@@ -142,17 +142,17 @@ static param_export_t params[] = {
 	{"hash_size",         	INT_PARAM, &ul_hash_size    },
 	{"subs_hash_size",    	INT_PARAM, &subs_hash_size  },
 	{"nat_bflag",         	INT_PARAM, &nat_bflag       },
-	{"usrloc_debug_file", 	STR_PARAM, &usrloc_debug_file.s},
+	{"usrloc_debug_file", 	PARAM_STR, &usrloc_debug_file},
 	{"enable_debug_file", 	INT_PARAM, &usrloc_debug},
-    {"user_data_dtd",     	STR_PARAM, &scscf_user_data_dtd},
-    {"user_data_xsd",     	STR_PARAM, &scscf_user_data_xsd},
+    {"user_data_dtd",     	PARAM_STRING, &scscf_user_data_dtd},
+    {"user_data_xsd",     	PARAM_STRING, &scscf_user_data_xsd},
     {"support_wildcardPSI",	INT_PARAM, &scscf_support_wildcardPSI},
     {"unreg_validity",		INT_PARAM, &unreg_validity},
     {"maxcontact_behaviour",INT_PARAM, &maxcontact_behaviour},
     {"maxcontact",			INT_PARAM, &maxcontact},
     {"sub_dialog_hash_size",INT_PARAM, &sub_dialog_hash_size},
     {"db_mode",				INT_PARAM, &db_mode},
-    {"db_url", 				STR_PARAM, &db_url.s},
+    {"db_url", 				PARAM_STR, &db_url},
 	{0, 0, 0}
 };
 
@@ -209,11 +209,6 @@ static int mod_init(void) {
 		LM_ERR("failed to register RPC commands\n");
 		return -1;
 	}
-
-	db_url.len = strlen(db_url.s);
-
-	/* Compute the lengths of string parameters */
-	usrloc_debug_file.len = strlen(usrloc_debug_file.s);
 
 	if (ul_hash_size <= 1)
 		ul_hash_size = 512;

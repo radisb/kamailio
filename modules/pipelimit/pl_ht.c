@@ -21,7 +21,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*! \file
@@ -240,7 +240,7 @@ pl_pipe_t* pl_pipe_get(str *pipeid, int mode)
 		if(pipeid->len==it->name.len 
 				&& strncmp(pipeid->s, it->name.s, pipeid->len)==0)
 		{
-			 /* lock_release(&_pl_pipes_ht->slots[idx].lock);*/
+			 if(mode==0) lock_release(&_pl_pipes_ht->slots[idx].lock);
 			 return it;
 		}
 		it = it->next;
@@ -605,7 +605,7 @@ void rpc_pl_stats(rpc_t *rpc, void *c)
 		while(it)
 		{
 			if (it->algo != PIPE_ALGO_NOP) {
-				if (rpc->printf(c, "PIPE: id=%.*s load=%d counter=%d",
+				if (rpc->rpl_printf(c, "PIPE: id=%.*s load=%d counter=%d",
 					it->name.len, it->name.s,
 					it->load, it->last_counter) < 0)
 				{
@@ -637,7 +637,7 @@ void rpc_pl_get_pipes(rpc_t *rpc, void *c)
 					lock_release(&_pl_pipes_ht->slots[i].lock);
 					return;
 				}
-				if (rpc->printf(c, "PIPE: id=%.*s algorithm=%.*s limit=%d counter=%d",
+				if (rpc->rpl_printf(c, "PIPE: id=%.*s algorithm=%.*s limit=%d counter=%d",
 					it->name.len, it->name.s, algo.len, algo.s,
 					it->limit, it->counter) < 0)
 				{

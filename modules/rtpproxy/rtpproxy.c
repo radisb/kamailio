@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  * History:
  * ---------
@@ -427,19 +427,19 @@ static pv_export_t mod_pvs[] = {
 };
 
 static param_export_t params[] = {
-	{"nortpproxy_str",        STR_PARAM, &nortpproxy_str.s      },
-	{"rtpproxy_sock",         STR_PARAM|USE_FUNC_PARAM,
+	{"nortpproxy_str",        PARAM_STR, &nortpproxy_str      },
+	{"rtpproxy_sock",         PARAM_STRING|USE_FUNC_PARAM,
 	                         (void*)rtpproxy_set_store          },
 	{"rtpproxy_disable_tout", INT_PARAM, &rtpproxy_disable_tout },
 	{"rtpproxy_retr",         INT_PARAM, &rtpproxy_retr         },
 	{"rtpproxy_tout",         INT_PARAM, &rtpproxy_tout         },
-	{"timeout_socket",    	  STR_PARAM, &timeout_socket_str.s  },
-	{"ice_candidate_priority_avp", STR_PARAM,
+	{"timeout_socket",    	  PARAM_STR, &timeout_socket_str  },
+	{"ice_candidate_priority_avp", PARAM_STRING,
 	 &ice_candidate_priority_avp_param},
-	{"extra_id_pv",           STR_PARAM, &extra_id_pv_param.s },
-	{"db_url",                STR_PARAM, &rtpp_db_url.s },
-	{"table_name",            STR_PARAM, &rtpp_table_name.s },
-	{"rtp_inst_pvar",         STR_PARAM, &rtp_inst_pv_param.s },
+	{"extra_id_pv",           PARAM_STR, &extra_id_pv_param },
+	{"db_url",                PARAM_STR, &rtpp_db_url },
+	{"table_name",            PARAM_STR, &rtpp_table_name },
+	{"rtp_inst_pvar",         PARAM_STR, &rtp_inst_pv_param },
 	{0, 0, 0}
 };
 
@@ -916,21 +916,16 @@ mod_init(void)
 	}
 	memset(rtpp_set_list, 0, sizeof(struct rtpp_set_head));
 
-	if (nortpproxy_str.s==NULL || nortpproxy_str.s[0]==0) {
+	if (nortpproxy_str.s==NULL || nortpproxy_str.len<=0) {
 		nortpproxy_str.len = 0;
-		nortpproxy_str.s = NULL;
 	} else {
-		nortpproxy_str.len = strlen(nortpproxy_str.s);
 		while (nortpproxy_str.len > 0 && (nortpproxy_str.s[nortpproxy_str.len - 1] == '\r' ||
 		    nortpproxy_str.s[nortpproxy_str.len - 1] == '\n'))
 			nortpproxy_str.len--;
-		if (nortpproxy_str.len == 0)
-			nortpproxy_str.s = NULL;
 	}
 
 	if (rtpp_db_url.s != NULL)
 	{
-		rtpp_db_url.len = strlen(rtpp_db_url.s);
 		init_rtpproxy_db();
 		if (rtpp_sets > 0)
 		{
@@ -953,13 +948,6 @@ mod_init(void)
 			pkg_free(rtpp_strings[i]);
 	}
 
-	if (timeout_socket_str.s==NULL || timeout_socket_str.s[0]==0) {
-		timeout_socket_str.len = 0;
-		timeout_socket_str.s = NULL;
-	} else {
-		timeout_socket_str.len = strlen(timeout_socket_str.s);
-	}
-
 	if (ice_candidate_priority_avp_param) {
 	    s.s = ice_candidate_priority_avp_param; s.len = strlen(s.s);
 	    if (pv_parse_spec(&s, &avp_spec) == 0 || avp_spec.type != PVT_AVP) {
@@ -974,7 +962,6 @@ mod_init(void)
 	}
 
 	if (rtp_inst_pv_param.s) {
-	    rtp_inst_pv_param.len = strlen(rtp_inst_pv_param.s);
 	    rtp_inst_pvar = pv_cache_get(&rtp_inst_pv_param);
 	    if ((rtp_inst_pvar == NULL) ||
 	    	((rtp_inst_pvar->type != PVT_AVP) &&
@@ -986,7 +973,6 @@ mod_init(void)
 	}
 
 	if (extra_id_pv_param.s && *extra_id_pv_param.s) {
-		extra_id_pv_param.len = strlen(extra_id_pv_param.s);
 		if(pv_parse_format(&extra_id_pv_param, &extra_id_pv) < 0) {
 			LM_ERR("malformed PV string: %s\n", extra_id_pv_param.s);
 			return -1;
@@ -2467,6 +2453,11 @@ force_rtp_proxy(struct sip_msg* msg, char* str1, char* str2, int offer, int forc
 	if (flookup != 0) {
 		if (to_tag.len == 0) {
 			FORCE_RTP_PROXY_RET (-1);
+		}
+		if (msg->first_line.type == SIP_REQUEST) {
+			tmp = from_tag;
+			from_tag = to_tag;
+			to_tag = tmp;
 		}
 		create = 0;
 	} else if ((msg->first_line.type == SIP_REPLY && offer != 0)

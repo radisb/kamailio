@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *
  *
  * History:
@@ -587,7 +587,8 @@ int restore_uri( struct sip_msg *msg, str *rr_param, str* restore_avp, int check
 
 	/* get new uri */
 	if ( new_uri.len<old_uri.len ) {
-		LM_ERR("new URI shorter than old URI\n");
+		LM_ERR("new URI [%.*s] shorter than old URI [%.*s]\n",
+				new_uri.len, new_uri.s, old_uri.len, old_uri.s);
 		goto failed;
 	}
 	for( i=0 ; i<old_uri.len ; i++ ) {
@@ -670,7 +671,8 @@ static inline int restore_uri_reply(struct sip_msg *rpl,
 	char *p;
 
 	if(stored_value->len) {
-		LM_DBG("stored AVP value is '%.*s'with len '%d'\n",stored_value->len, stored_value->s,stored_value->len);
+		LM_DBG("stored AVP value is '%.*s'with len '%d'\n",
+				stored_value->len, stored_value->s, stored_value->len);
 		len=stored_value->len;
 		p = stored_value->s;
 	} else {
@@ -741,10 +743,9 @@ void restore_uris_reply(struct cell* t, int type, struct tmcb_params *p)
 			return;
 		}
 
+		avp_value.s.len=0;
 		if(restore_from_avp.s) {
 			search_first_avp(restore_from_avp_type, restore_from_avp_name, &avp_value,0);
-		} else {
-			avp_value.s.len=0;
 		}
 
 		if (restore_uri_reply( rpl, rpl->from, req->from, &avp_value.s)) {
@@ -761,10 +762,9 @@ void restore_uris_reply(struct cell* t, int type, struct tmcb_params *p)
 			return;
 		}
 
+		avp_value.s.len=0;
 		if(restore_to_avp.s) {
 			search_first_avp(restore_to_avp_type, restore_to_avp_name, &avp_value,0);
-		} else {
-			avp_value.s.len=0;
 		}
 
 		if (restore_uri_reply( rpl, rpl->to, req->to, &avp_value.s)) {

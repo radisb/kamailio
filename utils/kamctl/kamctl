@@ -1,7 +1,5 @@
 #!/bin/bash
 #
-# $Id$
-#
 # control tool for maintaining Kamailio
 #
 #===================================================================
@@ -16,6 +14,27 @@ PATH=$PATH:/usr/local/sbin/
 TEST="false"
 
 ### include config files
+
+# check for rc file at same location with kamctl
+which greadlink > /dev/null
+ret=$?
+if [ $ret -eq 0 ] ; then
+	KAMCTLFULLPATH=$(greadlink -f "$0")
+else
+	which readlink > /dev/null
+	ret=$?
+	if [ $ret -eq 0 ] ; then
+		KAMCTLFULLPATH=$(readlink -f "$0")
+	fi
+fi
+if [ -n "$KAMCTLFULLPATH" ] ; then
+	KAMCTLDIRPATH=$(dirname "$KAMCTLFULLPATH")
+	if [ -f $KAMCTLDIRPATH/kamctlrc ]; then
+		. $KAMCTLDIRPATH/kamctlrc
+	fi
+fi
+
+# check for rc file at standard locations
 if [ -f /etc/kamailio/kamctlrc ]; then
 	. /etc/kamailio/kamctlrc
 fi
@@ -1243,6 +1262,7 @@ permissions_address() {
 		dump)
 			require_ctlengine
 			$CTLCMD address_dump
+			$CTLCMD subnet_dump
 			;;
 		show)
 			require_dbengine
@@ -1694,7 +1714,7 @@ dialplan() {
 
 		addrule)
 			shift
-			if [ $# -lt 8 ] ; then
+			if [ $# -lt 4 ] ; then
 				merr "too few parameters"
 				usage_dialplan
 				exit 1
@@ -1710,15 +1730,27 @@ dialplan() {
 				regexp)
 					DIALPLAN_MATCH_OP=1
 					;;
+				fnmatch)
+					DIALPLAN_MATCH_OP=2
+					;;
 				*)
 					merr "dialplan - unexpected $DIALPLAN_MATCH_OP for operating matching. Use 'equal' or 'regexp'!"
 					exit 1
 			esac
 			DIALPLAN_MATCH_EXP=$4
-			DIALPLAN_MATCH_LEN=$5
-			DIALPLAN_SUBST_EXP=$6
-			DIALPLAN_REPL_EXP=$7
-			DIALPLAN_ATTRS=$8
+			DIALPLAN_MATCH_LEN=0
+			if [ $# -gt 4 ] ; then
+				DIALPLAN_MATCH_LEN=$5
+			fi
+			if [ $# -gt 5 ] ; then
+				DIALPLAN_SUBST_EXP=$6
+			fi
+			if [ $# -gt 6 ] ; then
+				DIALPLAN_REPL_EXP=$7
+			fi
+			if [ $# -gt 7 ] ; then
+				DIALPLAN_ATTRS=$8
+			fi
 
 			QUERY="insert into $DIALPLAN_TABLE \
 				( $DIALPLAN_DPID_COLUMN, $DIALPLAN_PR_COLUMN, $DIALPLAN_MATCH_OP_COLUMN, \
@@ -1728,7 +1760,7 @@ dialplan() {
 				VALUES ( $DIALPLAN_DPID, $DIALPLAN_PR, $DIALPLAN_MATCH_OP, \
 					'$DIALPLAN_MATCH_EXP', $DIALPLAN_MATCH_LEN, '$DIALPLAN_SUBST_EXP', \
 					'$DIALPLAN_REPL_EXP', '$DIALPLAN_ATTRS')";
-			mecho "$QUERY"
+			mdbg "$QUERY"
 			$DBCMD "$QUERY"
 
 			if [ $? -ne 0 ] ; then
@@ -1736,7 +1768,8 @@ dialplan() {
 				exit 1
 			fi
 
-			$CTLCMD dp_reload
+			minfo "do not forget to do dialplan reload"
+			# $CTLCMD dp_reload
 			;;
 
 		rm)
@@ -1748,7 +1781,8 @@ dialplan() {
 				exit 1
 			fi
 
-			$CTLCMD dp_reload
+			minfo "do not forget to do dialplan reload"
+			# $CTLCMD dp_reload
 			;;
 
 		rmdpid)
@@ -1769,7 +1803,8 @@ dialplan() {
 				exit 1
 			fi
 
-			$CTLCMD dp_reload
+			minfo "do not forget to do dialplan reload"
+			# $CTLCMD dp_reload
 			;;
 
 		rmrule)
@@ -1791,7 +1826,8 @@ dialplan() {
 				exit 1
 			fi
 
-			$CTLCMD dp_reload
+			minfo "do not forget to do dialplan reload"
+			# $CTLCMD dp_reload
 			;;
 
 		reload)
@@ -2454,8 +2490,12 @@ usrloc() {
 				exit 1
 			fi
 
+			if [ -z "$DEFAULT_Q" ] ; then
+				DEFAULT_Q = "1.0"
+			fi
+
 			$CTLCMD ul_add "$USRLOC_TABLE" "$OSERUSER@$OSERDOMAIN" "$2" \
-"$UL_EXPIRES" "1.00" "$UL_PATH" "$UL_FLAGS" "$BR_FLAGS" "$ALL_METHODS"
+"$UL_EXPIRES" "$DEFAULT_Q" "$UL_PATH" "$UL_FLAGS" "$BR_FLAGS" "$ALL_METHODS"
 			exit $?
 			;;
 		rm)

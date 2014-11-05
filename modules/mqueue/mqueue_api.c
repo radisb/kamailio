@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -480,8 +480,9 @@ int pv_get_mq_size(struct sip_msg *msg, pv_param_t *param,
 
 	return pv_get_sintval(msg, param, res, mqs);
 }
-/* Return head->csize for a given queue */
-
+/**
+ * Return head->csize for a given queue
+ */
 int _mq_get_csize(str *name) 
 {
 	mq_head_t *mh = mq_head_get(name);

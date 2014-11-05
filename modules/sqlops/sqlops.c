@@ -17,7 +17,7 @@
  *
  * You should have received a copy of the GNU General Public License 
  * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*! \file
@@ -109,8 +109,8 @@ static cmd_export_t cmds[]={
 };
 
 static param_export_t params[]={
-	{"sqlcon",  STR_PARAM|USE_FUNC_PARAM, (void*)sql_con_param},
-	{"sqlres",  STR_PARAM|USE_FUNC_PARAM, (void*)sql_res_param},
+	{"sqlcon",  PARAM_STRING|USE_FUNC_PARAM, (void*)sql_con_param},
+	{"sqlres",  PARAM_STRING|USE_FUNC_PARAM, (void*)sql_res_param},
 	{0,0,0}
 };
 

@@ -18,7 +18,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 		       
 #ifndef _DLG_VAR_H_
@@ -39,9 +39,11 @@ typedef struct _dlg_ctx {
 	int timeout;
 	dlg_cell_t *dlg1;
 	dlg_iuid_t iuid;
+	int cpid;
 	int set;
 	unsigned int dir;
-	int t;
+	int t;				/* set to 1 if tm req in callback executed */
+	int expect_t;		/* set to 1 if expects that t is set after config */
 } dlg_ctx_t;
 
 /* A dialog-variable */

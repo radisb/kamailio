@@ -24,7 +24,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
  /*
  * History:
@@ -395,6 +395,7 @@ extern char *default_routename;
 %token LOGFACILITY
 %token LOGNAME
 %token LOGCOLOR
+%token LOGPREFIX
 %token LISTEN
 %token ADVERTISE
 %token ALIAS
@@ -546,6 +547,7 @@ extern char *default_routename;
 %token LATENCY_LIMIT_DB
 %token LATENCY_LIMIT_ACTION
 %token MSG_TIME
+%token ONSEND_RT_REPLY
 
 %token FLAGS_DECL
 %token AVPFLAGS_DECL
@@ -843,6 +845,8 @@ assign_stm:
 	| LOGNAME EQUAL error { yyerror("string value expected"); }
 	| LOGCOLOR EQUAL NUMBER { log_color=$3; }
 	| LOGCOLOR EQUAL error { yyerror("boolean value expected"); }
+	| LOGPREFIX EQUAL STRING { log_prefix_fmt=$3; }
+	| LOGPREFIX EQUAL error { yyerror("string value expected"); }
 	| DNS EQUAL NUMBER   { received_dns|= ($3)?DO_DNS:0; }
 	| DNS EQUAL error { yyerror("boolean value expected"); }
 	| REV_DNS EQUAL NUMBER { received_dns|= ($3)?DO_REV_DNS:0; }
@@ -1576,6 +1580,8 @@ assign_stm:
 	| LATENCY_LIMIT_ACTION EQUAL error  { yyerror("number  expected"); }
     | MSG_TIME EQUAL NUMBER { sr_msg_time=$3; }
 	| MSG_TIME EQUAL error  { yyerror("number  expected"); }
+	| ONSEND_RT_REPLY EQUAL NUMBER { onsend_route_reply=$3; }
+	| ONSEND_RT_REPLY EQUAL error { yyerror("int value expected"); }
 	| UDP_MTU EQUAL NUMBER { default_core_cfg.udp_mtu=$3; }
 	| UDP_MTU EQUAL error { yyerror("number expected"); }
 	| FORCE_RPORT EQUAL NUMBER 
@@ -1648,15 +1654,25 @@ module_stm:
 	}
 	| LOADMODULE error	{ yyerror("string expected"); }
 	| LOADPATH STRING {
-		DBG("loading modules under %s\n", $2);
-		printf("loading modules under %s\n", $2);
-		mods_dir = $2;
+		if(mods_dir_cmd==0) {
+			DBG("loading modules under %s\n", $2);
+			printf("loading modules under config path: %s\n", $2);
+			mods_dir = $2;
+		} else {
+			DBG("ignoring mod path given in config: %s\n", $2);
+			printf("loading modules under command line path: %s\n", mods_dir);
+		}
 	}
 	| LOADPATH error	{ yyerror("string expected"); }
 	| LOADPATH EQUAL STRING {
-		DBG("loading modules under %s\n", $3);
-		printf("loading modules under %s\n", $3);
-		mods_dir = $3;
+		if(mods_dir_cmd==0) {
+			DBG("loading modules under %s\n", $3);
+			printf("loading modules under config path: %s\n", $3);
+			mods_dir = $3;
+		} else {
+			DBG("ignoring mod path given in config: %s\n", $3);
+			printf("loading modules under command line path: %s\n", mods_dir);
+		}
 	}
 	| LOADPATH EQUAL error	{ yyerror("string expected"); }
 	| MODPARAM LPAREN STRING COMMA STRING COMMA STRING RPAREN {

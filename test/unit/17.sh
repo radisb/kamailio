@@ -30,25 +30,30 @@ CFG=17.cfg
 
 tmp_name=""$RANDOM"_kamailiodb_tmp"
 
-echo "loadmodule \"../../modules/db_berkeley/db_berkeley.so\"" >> $CFG
+echo "loadmodule \"../../modules/db_berkeley/db_berkeley.so\"" > $CFG
 cat 2.cfg >> $CFG
 echo "modparam(\"$DB_ALL_MOD\", \"db_url\", \"berkeley://`pwd`/$CTL_DIR/$tmp_name\")" >> $CFG
+echo -e "\nrequest_route {\n ;\n}" >> $CFG
 
 # setup config file
 cp $CTLRC $CTLRC.bak
 
-sed -i "s/# DBENGINE=MYSQL/DBENGINE=DB_BERKELEY/g" $CTLRC
-sed -i "s/# INSTALL_EXTRA_TABLES=ask/INSTALL_EXTRA_TABLES=yes/g" $CTLRC
-sed -i "s/# INSTALL_PRESENCE_TABLES=ask/INSTALL_PRESENCE_TABLES=yes/g" $CTLRC
+sed -i'' -e "s/# DBENGINE=MYSQL/DBENGINE=DB_BERKELEY/g" $CTLRC
+sed -i'' -e "s/# INSTALL_EXTRA_TABLES=ask/INSTALL_EXTRA_TABLES=yes/g" $CTLRC
+sed -i'' -e "s/# INSTALL_PRESENCE_TABLES=ask/INSTALL_PRESENCE_TABLES=yes/g" $CTLRC
+sed -i'' -e "s/# INSTALL_DBUID_TABLES=ask/INSTALL_DBUID_TABLES=yes/g" $CTLRC
 
 cp $DBCTL $DBCTL.bak
-sed -i "s/TEST=\"false\"/TEST=\"true\"/g" $DBCTL
+sed -i'' -e "s/TEST=\"false\"/TEST=\"true\"/g" $DBCTL
 
+CRT_DIR=`pwd`
+cd $CTL_DIR
 $DBCTL create $tmp_name > /dev/null
 ret=$?
+cd $CRT_DIR
 
 if [ "$ret" -eq 0 ] ; then
-	$BIN -w . -f $CFG > /dev/null
+	$BIN -w . -f $CFG -a no > /dev/null
 	ret=$?
 fi ;
 
@@ -56,7 +61,9 @@ sleep 1
 $KILL
 
 # cleanup
+cd $CTL_DIR
 $DBCTL drop $tmp_name > /dev/null
+cd $CRT_DIR
 mv $CTLRC.bak $CTLRC
 mv $DBCTL.bak $DBCTL
 

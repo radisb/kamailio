@@ -107,7 +107,7 @@
  * 
  * <h2>Memory Management</h2> 
  * The module provides implementation for all the functions required by the
- * management interface in SER, such as rpc->printf, rpc->add, rpc->struct_add
+ * management interface in SER, such as rpc->rpl_printf, rpc->add, rpc->struct_add
  * and so on. Whenever the management function calls one of the functions then
  * corresponding function in this module will be called to handle the request.
  *
@@ -1013,6 +1013,12 @@ static int print_value(struct xmlrpc_reply* res,
 		body.s = sint2str(va_arg(*ap, int), &body.len);
 		break;
 
+	case 'u':
+		prefix = int_prefix;
+		suffix = int_suffix;
+		body.s = int2str(va_arg(*ap, unsigned int), &body.len);
+		break;
+
 	case 'f':
 		prefix = double_prefix;
 		suffix = double_suffix;
@@ -1501,7 +1507,9 @@ static int get_string(char** val, struct xmlrpc_reply* reply,
 static int rpc_scan(rpc_ctx_t* ctx, char* fmt, ...)
 {
 	int read;
+	int ival;
 	int* int_ptr;
+	unsigned int* uint_ptr;
 	char** char_ptr;
 	str* str_ptr;
 	double* double_ptr;
@@ -1547,6 +1555,12 @@ static int rpc_scan(rpc_ctx_t* ctx, char* fmt, ...)
 		case 'd': /* Integer */
 			int_ptr = va_arg(ap, int*);
 			if (get_int(int_ptr, reply, ctx->doc, value, f) < 0) goto error;
+			break;
+
+		case 'u': /* Integer */
+			uint_ptr = va_arg(ap, unsigned int*);
+			if (get_int(&ival, reply, ctx->doc, value, f) < 0) goto error;
+			*uint_ptr = (unsigned int)ival;
 			break;
 			
 		case 'f': /* double */
@@ -1604,13 +1618,13 @@ static int rpc_scan(rpc_ctx_t* ctx, char* fmt, ...)
 #define RPC_BUF_SIZE 1024
 
 
-/** Implementation of rpc_printf function required by the management API in
+/** Implementation of rpc_rpl_printf function required by the management API in
  *	SER.
  *
  * This function will be called whenever a management function in SER calls
  * rpc-printf to add a parameter to the XML-RPC reply being constructed.
  */
-static int rpc_printf(rpc_ctx_t* ctx, char* fmt, ...)
+static int rpc_rpl_printf(rpc_ctx_t* ctx, char* fmt, ...)
 {
 	int n, buf_size;
 	char* buf;
@@ -1898,8 +1912,10 @@ static int rpc_struct_printf(struct rpc_struct* s, char* member_name,
 static int rpc_struct_scan(struct rpc_struct* s, char* fmt, ...)
 {
 	int read;
+	int ival;
 	va_list ap;
 	int* int_ptr;
+	unsigned int* uint_ptr;
 	double* double_ptr;
 	char** char_ptr;
 	str* str_ptr;
@@ -1929,6 +1945,12 @@ static int rpc_struct_scan(struct rpc_struct* s, char* fmt, ...)
 			if (get_int(int_ptr, reply, s->doc, value, f) < 0) goto error;
 			break;
 
+		case 'u': /* Integer */
+			uint_ptr = va_arg(ap, unsigned int*);
+			if (get_int(&ival, reply, s->doc, value, f) < 0) goto error;
+			*uint_ptr = (unsigned int)ival;
+			break;
+			
 		case 'f': /* double */
 			double_ptr = va_arg(ap, double*);
 			if (get_double(double_ptr, reply, s->doc, value, f) < 0)
@@ -2552,7 +2574,7 @@ static int mod_init(void)
 	func_param.fault = (rpc_fault_f)rpc_fault;
 	func_param.add = (rpc_add_f)rpc_add;
 	func_param.scan = (rpc_scan_f)rpc_scan;
-	func_param.printf = (rpc_printf_f)rpc_printf;
+	func_param.rpl_printf = (rpc_rpl_printf_f)rpc_rpl_printf;
 	func_param.struct_add = (rpc_struct_add_f)rpc_struct_add;
 	func_param.array_add = (rpc_array_add_f)rpc_array_add;
 	func_param.struct_scan = (rpc_struct_scan_f)rpc_struct_scan;
