@@ -44,6 +44,8 @@ extern int dbk_consumer_ack_loop_count;
 extern int dbk_single_consumer_on_reconnect;
 extern int dbk_consume_messages_on_reconnect;
 
+extern pv_spec_t kz_query_timeout_spec;
+
 const amqp_bytes_t kz_amqp_empty_bytes = { 0, NULL };
 const amqp_table_t kz_amqp_empty_table = { 0, NULL };
 
@@ -678,7 +680,7 @@ int kz_amqp_pipe_send(str *str_exchange, str *str_routing_key, str *str_payload)
 	return ret;
 }
 
-int kz_amqp_pipe_send_receive(str *str_exchange, str *str_routing_key, str *str_payload, json_obj_ptr* json_ret )
+int kz_amqp_pipe_send_receive(str *str_exchange, str *str_routing_key, str *str_payload, struct timeval* kz_timeout, json_obj_ptr* json_ret )
 {
 	int ret = 1;
     json_obj_ptr json_obj = NULL;
@@ -718,7 +720,9 @@ int kz_amqp_pipe_send_receive(str *str_exchange, str *str_routing_key, str *str_
 	cmd->routing_key = kz_amqp_str_dup(str_routing_key);
 	cmd->reply_routing_key = kz_amqp_string_dup(serverid);
 	cmd->payload = kz_amqp_string_dup(payload);
-	cmd->timeout = kz_qtimeout_tv;
+
+	cmd->timeout = *kz_timeout;
+
 	if(cmd->payload == NULL || cmd->routing_key == NULL || cmd->exchange == NULL) {
 		LM_ERR("failed to allocate kz_amqp_cmd parameters in process %d\n", getpid());
 		goto error;
@@ -810,6 +814,7 @@ int kz_amqp_query_ex(struct sip_msg* msg, char* exchange, char* routing_key, cha
 	  str json_s;
 	  str exchange_s;
 	  str routing_key_s;
+	  struct timeval kz_timeout = kz_qtimeout_tv;
 
 	  if(last_payload_result)
 		pkg_free(last_payload_result);
@@ -840,8 +845,19 @@ int kz_amqp_query_ex(struct sip_msg* msg, char* exchange, char* routing_key, cha
 
 		json_object_put(j);
 
+		if(kz_query_timeout_spec.type != PVT_NONE) {
+			pv_value_t pv_val;
+			if(pv_get_spec_value( msg, &kz_query_timeout_spec, &pv_val) == 0) {
+				if((pv_val.flags & PV_VAL_INT) && pv_val.ri != 0 ) {
+					kz_timeout.tv_usec = 0;
+					kz_timeout.tv_sec = pv_val.ri;
+					LM_DBG("SET TIMEOUT TO %i\n", (int) kz_timeout.tv_sec);
+				}
+			}
+		}
+
 		json_obj_ptr ret = NULL;
-		int res = kz_amqp_pipe_send_receive(&exchange_s, &routing_key_s, &json_s, &ret );
+		int res = kz_amqp_pipe_send_receive(&exchange_s, &routing_key_s, &json_s, &kz_timeout, &ret );
 
 		if(res != 0) {
 			return -1;

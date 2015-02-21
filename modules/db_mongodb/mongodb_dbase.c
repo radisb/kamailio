@@ -57,6 +57,152 @@ void db_mongodb_close(db1_con_t* _h)
 	db_do_close(_h, db_mongodb_free_connection);
 }
 
+/*
+ * Add key-op-value to a bson filter document
+ */
+int db_mongodb_bson_filter_add(bson_t *doc, const db_key_t* _k, const db_op_t* _op,
+		const db_val_t* _v, int idx)
+{
+	bson_t mdoc;
+	db_key_t tkey;
+	const db_val_t *tval;
+	int vtype;
+	str ocmp;
+
+	tkey = _k[idx];
+	tval = _v + idx;
+	vtype = VAL_TYPE(tval);
+
+	/* OP_EQ is handled separately */
+	if(!strcmp(_op[idx], OP_LT)) {
+		ocmp.s = "$lt";
+		ocmp.len = 3;
+	} else if(!strcmp(_op[idx], OP_LEQ)) {
+		ocmp.s = "$lte";
+		ocmp.len = 4;
+	} else if(!strcmp(_op[idx], OP_GT)) {
+		ocmp.s = "$gt";
+		ocmp.len = 3;
+	} else if(!strcmp(_op[idx], OP_GEQ)) {
+		ocmp.s = "$gte";
+		ocmp.len = 4;
+	} else if(!strcmp(_op[idx], OP_NEQ)
+			|| !strcmp(_op[idx], "!=")) {
+		ocmp.s = "$ne";
+		ocmp.len = 3;
+	} else {
+		LM_ERR("unsuported match operator: %s\n", _op[idx]);
+		goto error;
+	}
+
+	if(!bson_append_document_begin(doc, tkey->s, tkey->len, &mdoc)) {
+		LM_ERR("failed to append start to bson doc %.*s %s ... [%d]\n",
+					tkey->len, tkey->s, ocmp.s, idx);
+		goto error;
+	}
+
+	if(VAL_NULL(tval)) {
+		if(!bson_append_null(&mdoc, ocmp.s, ocmp.len)) {
+			LM_ERR("failed to append null to bson doc %.*s %s null [%d]\n",
+					tkey->len, tkey->s, ocmp.s, idx);
+			goto error;
+		}
+		goto done;
+	}
+	switch(vtype) {
+		case DB1_INT:
+			if(!bson_append_int32(&mdoc, ocmp.s, ocmp.len,
+						VAL_INT(tval))) {
+				LM_ERR("failed to append int to bson doc %.*s %s %d [%d]\n",
+						tkey->len, tkey->s, ocmp.s, VAL_INT(tval), idx);
+				goto error;
+			}
+			break;
+
+		case DB1_BIGINT:
+			if(!bson_append_int64(&mdoc, ocmp.s, ocmp.len,
+						VAL_BIGINT(tval ))) {
+				LM_ERR("failed to append bigint to bson doc %.*s %s %lld [%d]\n",
+						tkey->len, tkey->s, ocmp.s, VAL_BIGINT(tval), idx);
+				goto error;
+			}
+			return -1;
+
+		case DB1_DOUBLE:
+			if(!bson_append_double(&mdoc, ocmp.s, ocmp.len,
+						VAL_DOUBLE(tval))) {
+				LM_ERR("failed to append double to bson doc %.*s %s %f [%d]\n",
+						tkey->len, tkey->s, ocmp.s, VAL_DOUBLE(tval), idx);
+				goto error;
+			}
+			break;
+
+		case DB1_STRING:
+			if(!bson_append_utf8(&mdoc, ocmp.s, ocmp.len,
+						VAL_STRING(tval), strlen(VAL_STRING(tval))) ) {
+				LM_ERR("failed to append string to bson doc %.*s %s %s [%d]\n",
+						tkey->len, tkey->s, ocmp.s, VAL_STRING(tval), idx);
+				goto error;
+			}
+			break;
+
+		case DB1_STR:
+
+			if(!bson_append_utf8(&mdoc, ocmp.s, ocmp.len,
+						VAL_STR(tval).s, VAL_STR(tval).len) ) {
+				LM_ERR("failed to append str to bson doc %.*s %s %.*s [%d]\n",
+						tkey->len, tkey->s, ocmp.s, VAL_STR(tval).len, VAL_STR(tval).s, idx);
+				goto error;
+			}
+			break;
+
+		case DB1_DATETIME:
+			if(!bson_append_time_t(&mdoc, ocmp.s, ocmp.len,
+						VAL_TIME(tval))) {
+				LM_ERR("failed to append time to bson doc %.*s %s %ld [%d]\n",
+						tkey->len, tkey->s, ocmp.s, VAL_TIME(tval), idx);
+				goto error;
+			}
+			break;
+
+		case DB1_BLOB:
+			if(!bson_append_binary(&mdoc, ocmp.s, ocmp.len,
+						BSON_SUBTYPE_BINARY,
+						(const uint8_t *)VAL_BLOB(tval).s, VAL_BLOB(tval).len) ) {
+				LM_ERR("failed to append blob to bson doc %.*s %s [bin] [%d]\n",
+						tkey->len, tkey->s, ocmp.s, idx);
+				goto error;
+			}
+			break;
+
+		case DB1_BITMAP:
+			if(!bson_append_int32(&mdoc, ocmp.s, ocmp.len,
+						VAL_INT(tval))) {
+				LM_ERR("failed to append bitmap to bson doc %.*s %s %d [%d]\n",
+						tkey->len, tkey->s, ocmp.s, VAL_INT(tval), idx);
+				goto error;
+			}
+			break;
+
+		default:
+			LM_ERR("val type [%d] not supported\n", vtype);
+			goto error;
+	}
+
+done:
+	if(!bson_append_document_end(doc, &mdoc)) {
+		LM_ERR("failed to append end to bson doc %.*s %s ... [%d]\n",
+					tkey->len, tkey->s, ocmp.s, idx);
+		goto error;
+	}
+	return 0;
+error:
+	return -1;
+}
+
+/*
+ * Add key-value to a bson document
+ */
 int db_mongodb_bson_add(bson_t *doc, const db_key_t _k, const db_val_t *_v, int idx)
 {
 	int vtype;
@@ -717,10 +863,23 @@ int db_mongodb_query(const db1_con_t* _h, const db_key_t* _k, const db_op_t* _op
 		goto error;
 	}
 
-	for(i = 0; i < _n; i++) {
-		if(db_mongodb_bson_add(seldoc, _k[i], _v+i, i)<0)
-			goto error;
+	if(_op==NULL) {
+		for(i = 0; i < _n; i++) {
+			if(db_mongodb_bson_add(seldoc, _k[i], _v+i, i)<0)
+				goto error;
+		}
+	} else {
+		for(i = 0; i < _n; i++) {
+			if(!strcmp(_op[i], OP_EQ)) {
+				if(db_mongodb_bson_add(seldoc, _k[i], _v+i, i)<0)
+					goto error;
+			} else {
+				if(db_mongodb_bson_filter_add(seldoc, _k, _op, _v, i)<0)
+					goto error;
+			}
+		}
 	}
+
 	if(is_printable(L_DBG)) {
 		jstr = bson_as_json (seldoc, NULL);
 		LM_DBG("query filter: %s\n", jstr);
@@ -938,9 +1097,21 @@ int db_mongodb_delete(const db1_con_t* _h, const db_key_t* _k,
 		goto error;
 	}
 
-	for(i = 0; i < _n; i++) {
-		if(db_mongodb_bson_add(doc, _k[i], _v+i, i)<0)
-			goto error;
+	if(_o==NULL) {
+		for(i = 0; i < _n; i++) {
+			if(db_mongodb_bson_add(doc, _k[i], _v+i, i)<0)
+				goto error;
+		}
+	} else {
+		for(i = 0; i < _n; i++) {
+			if(!strcmp(_o[i], OP_EQ)) {
+				if(db_mongodb_bson_add(doc, _k[i], _v+i, i)<0)
+					goto error;
+			} else {
+				if(db_mongodb_bson_filter_add(doc, _k, _o, _v, i)<0)
+					goto error;
+			}
+		}
 	}
 
 	if(is_printable(L_DBG)) {
@@ -984,7 +1155,7 @@ int db_mongodb_update(const db1_con_t* _h, const db_key_t* _k,
 	mongoc_collection_t *collection = NULL;
 	bson_error_t error;
 	bson_t *mdoc = NULL;
-	bson_t *udoc = NULL;
+	bson_t *udoc = NULL, *sdoc = NULL;
 	char *cname;
 	char b1;
 
@@ -1018,6 +1189,11 @@ int db_mongodb_update(const db1_con_t* _h, const db_key_t* _k,
 		LM_ERR("cannot initialize update bson document\n");
 		goto error;
 	}
+	sdoc = bson_new();
+	if(sdoc==NULL) {
+		LM_ERR("cannot initialize update bson document\n");
+		goto error;
+	}
 	mdoc = bson_new();
 	if(mdoc==NULL) {
 		LM_ERR("cannot initialize match bson document\n");
@@ -1025,28 +1201,46 @@ int db_mongodb_update(const db1_con_t* _h, const db_key_t* _k,
 	}
 
 	for(i = 0; i < _un; i++) {
-		if(db_mongodb_bson_add(udoc, _uk[i], _uv+i, i)<0)
+		if(db_mongodb_bson_add(sdoc, _uk[i], _uv+i, i)<0)
 			goto error;
 	}
+	if(bson_append_document(udoc, "$set", 4, sdoc)<0) {
+                LM_ERR("failed to append document to bson document\n");
+                goto error;
+        }
 
-	for(i = 0; i < _n; i++) {
-		if(db_mongodb_bson_add(mdoc, _k[i], _v+i, i)<0)
-			goto error;
+	if(_o==NULL) {
+		for(i = 0; i < _n; i++) {
+			if(db_mongodb_bson_add(mdoc, _k[i], _v+i, i)<0)
+				goto error;
+		}
+	} else {
+		for(i = 0; i < _n; i++) {
+			if(!strcmp(_o[i], OP_EQ)) {
+				if(db_mongodb_bson_add(mdoc, _k[i], _v+i, i)<0)
+					goto error;
+			} else {
+				if(db_mongodb_bson_filter_add(mdoc, _k, _o, _v, i)<0)
+					goto error;
+			}
+		}
 	}
 
-	if (!mongoc_collection_find_and_modify (collection, mdoc, NULL, udoc, NULL,
-				false, false, false, NULL, &error)) {
+	if (!mongoc_collection_update (collection, MONGOC_UPDATE_NONE, mdoc,
+				udoc, NULL, &error)) {
 		LM_ERR("failed to update in collection: %s\n", error.message);
 		goto error;
 	}
 	bson_destroy (mdoc);
 	bson_destroy (udoc);
+	bson_destroy (sdoc);
 	mongoc_collection_destroy (collection);
 	
 	return 0;
 error:
 	if(mdoc) bson_destroy (mdoc);
 	if(udoc) bson_destroy (udoc);
+	if(sdoc) bson_destroy (sdoc);
 	if(collection) mongoc_collection_destroy (collection);
 	return -1;
 }
