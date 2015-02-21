@@ -365,7 +365,7 @@ module_group_kkazoo=$(mod_list_kazoo)
 module_group_kmongodb=$(mod_list_mongodb)
 
 # Modules needed by Okeanos
-module_group_okeanos=tm tmx rr sl pv kex htable textops siputils maxfwd sanity pike xlog rtpengine mi_fifo auth uac nat_traversal nathelper
+module_group_okeanos=tm tmx rr sl pv kex htable textops siputils maxfwd sanity pike xlog rtpengine mi_fifo auth uac nat_traversal nathelper db_postgres
 
 # list of static modules
 #
